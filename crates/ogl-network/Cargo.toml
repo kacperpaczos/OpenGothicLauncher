@@ -1,0 +1,14 @@
+[package]
+name = "ogl-network"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+serde.workspace = true
+hex.workspace = true
