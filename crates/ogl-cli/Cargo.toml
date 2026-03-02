@@ -1,0 +1,16 @@
+[package]
+name = "ogl-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+tokio.workspace = true
+
+ogl-core = { path = "../ogl-core" }
+ogl-network = { path = "../ogl-network" }
+ogl-executor = { path = "../ogl-executor" }
+ogl-mods = { path = "../ogl-mods" }
