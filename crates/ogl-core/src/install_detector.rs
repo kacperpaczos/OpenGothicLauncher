@@ -477,3 +477,60 @@ fn brute_force_skip_dirs() -> Vec<&'static str> {
         "target",
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::{tempdir, TempDir};
+
+    fn setup_test_dir() -> TempDir {
+        tempdir().unwrap()
+    }
+
+    #[test]
+    fn test_is_valid_root_gothic2() {
+        let temp_dir = setup_test_dir();
+        let dir = temp_dir.path();
+        let sys = dir.join("System");
+        let data = dir.join("Data");
+        fs::create_dir_all(&sys).unwrap();
+        fs::create_dir_all(&data).unwrap();
+        
+        fs::write(sys.join("Gothic2.exe"), "dummy").unwrap();
+        
+        // Should be recognized as Gothic2, but NOT Gothic2NotR
+        assert!(is_valid_root(&dir, GothicGame::Gothic2));
+        assert!(!is_valid_root(&dir, GothicGame::Gothic2NotR));
+        
+        // Now add the NotR addon
+        fs::write(data.join("Addon.vdf"), "dummy").unwrap();
+        
+        // Now it should be recognized as Gothic2NotR, but NOT Gothic2 vanilla
+        assert!(is_valid_root(&dir, GothicGame::Gothic2NotR));
+        assert!(!is_valid_root(&dir, GothicGame::Gothic2));
+    }
+
+    #[test]
+    fn test_is_valid_root_archolos() {
+        let temp_dir = setup_test_dir();
+        let dir = temp_dir.path();
+        let sys = dir.join("System");
+        fs::create_dir_all(&sys).unwrap();
+        
+        fs::write(sys.join("Gothic2.exe"), "dummy").unwrap();
+        fs::write(sys.join("GothicStarter.exe"), "dummy").unwrap();
+        
+        assert!(is_valid_root(&dir, GothicGame::ChroniclesOfMyrtana));
+    }
+
+    #[test]
+    fn test_is_valid_root_gothic3() {
+        let temp_dir = setup_test_dir();
+        let dir = temp_dir.path();
+        fs::write(dir.join("Gothic3.exe"), "dummy").unwrap();
+        
+        assert!(is_valid_root(&dir, GothicGame::Gothic3));
+    }
+}
+

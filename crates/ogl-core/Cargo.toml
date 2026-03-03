@@ -14,3 +14,6 @@ dirs.workspace = true
 # Windows registry access for Stage 1 Steam/GOG detection
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-registry = "0.4"
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -54,3 +54,20 @@ impl Executor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_launch_nonexistent_executable() {
+        let executor = Executor::new("/path/that/definitely/does/not/exist/opengothic");
+        let result = executor.launch(Path::new("/dummy/gothic"), &["mod1.vdf".to_string()]).await;
+        
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ExecutorError::ProcessError(_) => {}, // Expected
+            err => panic!("Expected ProcessError but got: {}", err),
+        }
+    }
+}
