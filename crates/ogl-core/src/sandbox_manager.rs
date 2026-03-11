@@ -18,6 +18,10 @@ impl SandboxManager {
     pub fn new() -> Result<Self, SandboxError> {
         let base_dir = data_local_dir().ok_or(SandboxError::NoDataDir)?;
         let sandboxes_dir = base_dir.join("OpenGothicLauncher").join("sandboxes");
+        Self::with_dir(sandboxes_dir)
+    }
+
+    pub fn with_dir(sandboxes_dir: PathBuf) -> Result<Self, SandboxError> {
         if !sandboxes_dir.exists() {
             std::fs::create_dir_all(&sandboxes_dir)?;
         }
@@ -35,5 +39,24 @@ impl SandboxManager {
         // In the future, this can symlink Data/, Saves/, or System/Gothic.ini etc.
         
         Ok(sandbox_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_prepare_sandbox() {
+        let temp_dir = tempdir().unwrap();
+        
+        let manager = SandboxManager::with_dir(temp_dir.path().to_path_buf()).unwrap();
+        let dummy_root = PathBuf::from("/dummy/gothic");
+        
+        let sandbox_path = manager.prepare_sandbox("MainProfile", &dummy_root).unwrap();
+        
+        assert!(sandbox_path.exists());
+        assert!(sandbox_path.ends_with("MainProfile"));
     }
 }

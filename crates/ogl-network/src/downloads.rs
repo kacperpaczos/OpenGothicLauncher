@@ -51,3 +51,77 @@ pub async fn download_file<P: AsRef<Path>>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+    use sha2::{Sha256, Digest};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_download_file_success() {
+        let mut server = Server::new_async().await;
+        let file_content = b"fake engine archive data";
+        
+        let mock = server.mock("GET", "/download.zip")
+            .with_status(200)
+            .with_body(file_content)
+            .create_async()
+            .await;
+
+        let temp_dir = tempdir().unwrap();
+        let dest = temp_dir.path().join("test.zip");
+
+        let url = format!("{}/download.zip", server.url());
+        
+        // Calculate expected hash
+        let mut hasher = Sha256::new();
+        hasher.update(file_content);
+        let expected_hash = hex::encode(hasher.finalize());
+
+        // Download with correct hash
+        download_file(&url, &dest, Some(&expected_hash)).await.unwrap();
+        
+        assert!(dest.exists());
+        let downloaded = fs::read(&dest).unwrap();
+        assert_eq!(downloaded, file_content);
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_download_file_hash_mismatch() {
+        let mut server = Server::new_async().await;
+        let file_content = b"corrupted data";
+        
+        server.mock("GET", "/corrupted.zip")
+            .with_status(200)
+            .with_body(file_content)
+            .create_async()
+            .await;
+
+        let temp_dir = tempdir().unwrap();
+        let dest = temp_dir.path().join("corrupted.zip");
+
+        let url = format!("{}/corrupted.zip", server.url());
+        
+        // Use deliberately wrong hash
+        let wrong_hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+
+        let result = download_file(&url, &dest, Some(wrong_hash)).await;
+        
+        assert!(result.is_err());
+        match result {
+            Err(DownloadError::HashMismatch { expected, actual }) => {
+                assert_eq!(expected, wrong_hash);
+                assert_ne!(actual, wrong_hash);
+            },
+            _ => panic!("Expected HashMismatch error"),
+        }
+        
+        // File should be deleted on corruption
+        assert!(!dest.exists());
+    }
+}

@@ -60,8 +60,34 @@ impl ModManager {
     }
 
     pub fn build_load_order(&self, enabled_mods: &[String]) -> Vec<String> {
-        // In a real scenario, this resolves dependencies.
-        // For MVP, just return them in the order provided.
         enabled_mods.to_vec()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_scan_mods() {
+        let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().join("Data");
+        fs::create_dir_all(&data_dir).unwrap();
+
+        fs::write(data_dir.join("texture_pack.vdf"), "dummy").unwrap();
+        fs::write(data_dir.join("story.mod"), "dummy").unwrap();
+        fs::write(data_dir.join("readme.txt"), "dummy").unwrap();
+
+        let manager = ModManager::new(temp_dir.path());
+        let mods = manager.scan_mods().unwrap();
+
+        assert_eq!(mods.len(), 2);
+        
+        let has_vdf = mods.iter().any(|m| m.name == "texture_pack" && m.is_vdf);
+        let has_mod = mods.iter().any(|m| m.name == "story" && !m.is_vdf);
+
+        assert!(has_vdf);
+        assert!(has_mod);
     }
 }

@@ -39,3 +39,13 @@ fn build_ui(app: &Application) {
     window.set_child(Some(&vbox));
     window.present();
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_gui_compiles_and_harness_works() {
+        // GTK startup tests require a display server (X11/Wayland). 
+        // This test ensures that the module compiles correctly and cargo test works.
+        assert_eq!(2 + 2, 4);
+    }
+}
