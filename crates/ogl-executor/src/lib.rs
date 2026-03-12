@@ -26,10 +26,14 @@ impl Executor {
     pub async fn launch(&self, gothic_root: &Path, mods: &[String]) -> Result<(), ExecutorError> {
         let mut command = Command::new(&self.executable_path);
 
-        command.arg("--game").arg(gothic_root);
+        command.arg("-g").arg(gothic_root);
         
         for m in mods {
-            command.arg("--mod").arg(m);
+            command.arg(format!("-game:{}", m));
+        }
+
+        if let Some(parent) = self.executable_path.parent() {
+            command.current_dir(parent);
         }
 
         command.stdout(Stdio::piped())
