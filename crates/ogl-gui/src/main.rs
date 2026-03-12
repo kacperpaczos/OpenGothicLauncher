@@ -3,6 +3,7 @@ mod runtime;
 mod window;
 mod sidebar;
 mod game_panel;
+mod engine_window;
 
 use gtk4::prelude::*;
 use gtk4::Application;

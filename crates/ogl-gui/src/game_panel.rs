@@ -106,6 +106,8 @@ impl GamePanel {
                 engine_label.set_halign(Align::Start);
                 self.container.append(&engine_label);
 
+                Self::append_engine_manager_button(&self.container, &self.state);
+
                 let launch_btn = Button::with_label("▶  Launch OpenGothic");
                 launch_btn.add_css_class("suggested-action");
                 launch_btn.add_css_class("pill");
@@ -140,6 +142,8 @@ impl GamePanel {
                     });
                     self.container.append(&download_btn);
                 }
+
+                Self::append_engine_manager_button(&self.container, &self.state);
             }
         } else {
             // ─── State A: Game not detected ───
@@ -198,6 +202,18 @@ impl GamePanel {
     }
 
     // ─── Action handlers ───
+    fn append_engine_manager_button(container: &GtkBox, state: &SharedState) {
+        let manage_btn = Button::with_label("⚙  Manage engines");
+        manage_btn.set_margin_top(8);
+
+        let state_ref = state.clone();
+        manage_btn.connect_clicked(move |btn| {
+            let parent = btn.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            crate::engine_window::open_engine_manager_window(&state_ref, parent.as_ref());
+        });
+
+        container.append(&manage_btn);
+    }
 
     fn on_scan_clicked(state: &SharedState) {
         let game = { state.lock().unwrap().selected_game };
@@ -299,64 +315,38 @@ impl GamePanel {
         { state.lock().unwrap().download_progress = Some(0.0); }
 
         runtime::background().spawn(async move {
-            // Fetch latest release info
-            let release = match ogl_network::fetch_latest_release(None).await {
-                Ok(r) => r,
+            // Download progress callback
+            let progress_weak = state_weak.clone();
+
+            let manager = match ogl_core::engine_manager::EngineManager::new() {
+                Ok(mgr) => mgr,
                 Err(e) => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
                             let mut s = state.lock().unwrap();
                             s.download_progress = None;
-                            s.error_message = Some(format!("Failed to fetch release: {}", e));
+                            s.error_message = Some(format!("Failed to resolve engines directory: {}", e));
                         }
                     });
                     return;
                 }
             };
 
-            // Find a suitable asset for this platform
-            let asset = release.assets.iter().find(|a| {
-                let name = a.name.to_lowercase();
-                if cfg!(target_os = "linux") {
-                    name.contains("linux")
-                } else if cfg!(target_os = "windows") {
-                    name.contains("win")
-                } else if cfg!(target_os = "macos") {
-                    name.contains("mac") || name.contains("osx")
-                } else {
-                    false
-                }
-            });
-
-            let asset = match asset {
-                Some(a) => a,
+            let platform = match ogl_core::engine_manager::EnginePlatform::current() {
+                Some(p) => p,
                 None => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
                             let mut s = state.lock().unwrap();
                             s.download_progress = None;
-                            s.error_message = Some("No compatible engine asset found for this platform".to_string());
+                            s.error_message = Some("Unsupported platform for engine download".to_string());
                         }
                     });
                     return;
                 }
             };
 
-            // Determine destination
-            let engines_dir = dirs::data_local_dir()
-                .unwrap_or_default()
-                .join("OpenGothicLauncher")
-                .join("engines")
-                .join(&release.tag_name);
-
-            let _ = std::fs::create_dir_all(&engines_dir);
-            let dest_path = engines_dir.join(&asset.name);
-
-            // Download progress callback
-            let progress_weak = state_weak.clone();
-
-            // Download
-            let result = ogl_network::download_file(&asset.browser_download_url, &dest_path, None, Some(Box::new(move |current, total| {
+            let result = manager.install_latest(platform, Some(Box::new(move |current, total| {
                 if total > 0 {
                     let progress = current as f64 / total as f64;
                     let weak_clone = progress_weak.clone();
@@ -369,12 +359,12 @@ impl GamePanel {
             }))).await;
 
             match result {
-                Ok(()) => {
+                Ok(install) => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
                             let mut s = state.lock().unwrap();
                             s.download_progress = None;
-                            s.config.active_engine = Some(release.tag_name.clone());
+                            s.config.active_engine = Some(install.version.clone());
                             // Refresh engine list
                             if let Ok(mgr) = ogl_core::engine_manager::EngineManager::new() {
                                 s.installed_engines = mgr.list_installed().unwrap_or_default();
@@ -404,6 +394,7 @@ impl GamePanel {
             Some(p) => p.clone(),
             None => return,
         };
+        let selected_game = s.selected_game;
 
         // Find engine executable
         let engine_path = if let Some(ref active_version) = s.config.active_engine {
@@ -422,12 +413,24 @@ impl GamePanel {
                 return;
             }
         };
+        let mods = Self::mods_for_game(selected_game, &gothic_root);
+        if selected_game == ogl_core::install_detector::GothicGame::ChroniclesOfMyrtana && mods.is_empty() {
+            drop(s);
+            let mut s = state.lock().unwrap();
+            s.error_message = Some("Archolos: mod manifest (.ini) not found in System/".to_string());
+            return;
+        }
         drop(s);
+
+        if cfg!(target_os = "linux") {
+            Self::ensure_case_dir(&gothic_root, "System");
+            Self::ensure_case_dir(&gothic_root, "Data");
+        }
 
         let state_weak = std::sync::Arc::downgrade(state);
         runtime::background().spawn(async move {
             let executor = ogl_executor::Executor::new(&engine_path);
-            if let Err(e) = executor.launch(&gothic_root, &[]).await {
+            if let Err(e) = executor.launch(&gothic_root, &mods).await {
                 glib::MainContext::default().invoke(move || {
                     if let Some(state) = state_weak.upgrade() {
                         let mut s = state.lock().unwrap();
@@ -436,5 +439,138 @@ impl GamePanel {
                 });
             }
         });
+    }
+
+    fn mods_for_game(game: ogl_core::install_detector::GothicGame, gothic_root: &std::path::Path) -> Vec<String> {
+        if game != ogl_core::install_detector::GothicGame::ChroniclesOfMyrtana {
+            return Vec::new();
+        }
+
+        let system_dir = match Self::find_system_dir_ci(gothic_root) {
+            Some(dir) => dir,
+            None => return Vec::new(),
+        };
+        let primary = system_dir.join("TheChroniclesOfMyrtana.ini");
+        if primary.exists() {
+            return vec!["TheChroniclesOfMyrtana.ini".to_string()];
+        }
+
+        if let Ok(entries) = std::fs::read_dir(&system_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let lower = name.to_lowercase();
+                if lower.ends_with(".ini") && (lower.contains("myrtana") || lower.contains("chronicles")) {
+                    return vec![name];
+                }
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn find_system_dir_ci(root: &std::path::Path) -> Option<std::path::PathBuf> {
+        let direct = root.join("System");
+        if direct.is_dir() {
+            return Some(direct);
+        }
+        let entries = std::fs::read_dir(root).ok()?;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name == "system" {
+                let path = entry.path();
+                if path.is_dir() {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+
+    fn ensure_case_dir(root: &std::path::Path, expected: &str) {
+        let direct = root.join(expected);
+        if direct.exists() {
+            return;
+        }
+        let expected_lower = expected.to_lowercase();
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.to_lowercase() == expected_lower {
+                    let target = entry.path();
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::symlink;
+                        if let Err(e) = symlink(&target, &direct) {
+                            tracing::warn!("Failed to create symlink {} -> {}: {}", direct.display(), target.display(), e);
+                        } else {
+                            tracing::info!("Created symlink {} -> {}", direct.display(), target.display());
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = target; // no-op on non-unix
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_mods_for_archolos_primary_ini() {
+        let temp = tempdir().unwrap();
+        let system = temp.path().join("System");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(system.join("TheChroniclesOfMyrtana.ini"), "dummy").unwrap();
+
+        let mods = GamePanel::mods_for_game(
+            ogl_core::install_detector::GothicGame::ChroniclesOfMyrtana,
+            temp.path(),
+        );
+        assert_eq!(mods, vec!["TheChroniclesOfMyrtana.ini".to_string()]);
+    }
+
+    #[test]
+    fn test_mods_for_archolos_fallback_ini() {
+        let temp = tempdir().unwrap();
+        let system = temp.path().join("System");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(system.join("myrtana_custom.ini"), "dummy").unwrap();
+
+        let mods = GamePanel::mods_for_game(
+            ogl_core::install_detector::GothicGame::ChroniclesOfMyrtana,
+            temp.path(),
+        );
+        assert_eq!(mods, vec!["myrtana_custom.ini".to_string()]);
+    }
+
+    #[test]
+    fn test_find_system_dir_case_insensitive() {
+        let temp = tempdir().unwrap();
+        let system = temp.path().join("system");
+        std::fs::create_dir_all(&system).unwrap();
+
+        let found = GamePanel::find_system_dir_ci(temp.path()).unwrap();
+        assert_eq!(found, system);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ensure_case_dir_creates_symlink() {
+        let temp = tempdir().unwrap();
+        let lower = temp.path().join("system");
+        std::fs::create_dir_all(&lower).unwrap();
+
+        GamePanel::ensure_case_dir(temp.path(), "System");
+
+        let upper = temp.path().join("System");
+        assert!(upper.exists());
+        assert!(std::fs::read_link(&upper).is_ok());
     }
 }
