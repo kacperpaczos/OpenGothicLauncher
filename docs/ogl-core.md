@@ -5,8 +5,8 @@
 ## Key Responsibilities
 
 1. **Installation Detection (`install_detector`)**: Cross-platform detection of Gothic installations using a 3-stage algorithm (see below). Supports all Gothic variants.
-2. **Configuration Management (`config_manager`)**: Handles persistent user settings. Reads and writes TOML files to the OS-native config directory (profiles, engine versions, paths).
-3. **Engine Management (`engine_manager`)**: Manages downloaded OpenGothic engine versions in the OS data directory and lists which are available to launch.
+2. **Configuration Management (`config_manager`)**: Handles persistent user settings. Reads and writes JSON files to `~/.OpenGothicLauncher/config` (profiles, engine versions, paths).
+3. **Engine Management (`engine_manager`)**: Downloads, extracts, and activates OpenGothic engine versions under `~/.OpenGothicLauncher/data/engines`.
 4. **Sandbox Management (`sandbox_manager`)**: Prepares isolated working directories for different game profiles, allowing separate mod loadouts and save files without touching the base installation.
 
 ## Supported Game Variants
@@ -53,4 +53,4 @@ let install = detect_brute_force(GothicGame::Gothic3, |path| {
 
 ## Architecture
 
-Depends only on `dirs` (system paths), `serde` (serialization), `thiserror` (errors), and on Windows builds: `windows-registry` (Registry API). All other crates (`ogl-cli`, `ogl-gui`) pull from `ogl-core` to make decisions.
+Depends only on `dirs` (system paths), `serde` (serialization), `thiserror` (errors), and on Windows builds: `windows-registry` (Registry API). All other crates (`ogl-cli`, `ogl-gui`) pull from `ogl-core` to make decisions. Runtime data and config live under `~/.OpenGothicLauncher/` for consistent per-user storage.

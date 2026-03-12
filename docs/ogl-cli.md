@@ -11,5 +11,9 @@
 ## Commands
 
 - `ogl-cli detect` - Auto-detects the Gothic installation folder.
-- `ogl-cli engines` - Lists currently installed OpenGothic runtimes.
+- `ogl-cli engines list` - Lists installed OpenGothic engines.
+- `ogl-cli engines install-latest` - Downloads and installs the latest engine for the current platform.
+- `ogl-cli engines set-active <version>` - Sets the active engine version.
+- `ogl-cli engines active` - Shows the active engine version.
+- `ogl-cli engines dir` - Prints the engines directory.
 - `ogl-cli mods` - Scans and lists all found modifications in the data directory.
