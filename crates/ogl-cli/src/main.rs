@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 use ogl_core::{ConfigManager, GameState};
-use ogl_core::engine_manager::EngineManager;
+use ogl_core::engine_manager::{EngineManager, EnginePlatform};
 use tracing::{info, error};
 
 #[derive(Parser)]
@@ -20,10 +20,30 @@ enum Commands {
         #[arg(long)]
         scan_disk: bool,
     },
-    /// List installed OpenGothic engines
-    Engines,
+    /// Manage OpenGothic engines
+    Engines {
+        #[command(subcommand)]
+        action: EngineCommands,
+    },
     /// List detected mods
     Mods,
+}
+
+#[derive(Subcommand)]
+enum EngineCommands {
+    /// List installed engines
+    List,
+    /// Install the latest engine for the current platform
+    InstallLatest,
+    /// Set active engine version
+    SetActive {
+        /// Version tag (e.g. opengothic-v1.0.3549)
+        version: String,
+    },
+    /// Show active engine
+    Active,
+    /// Show engines directory
+    Dir,
 }
 
 #[tokio::main]
@@ -103,17 +123,49 @@ async fn main() -> Result<()> {
             // Save all detected results
             cfg_manager.save(&config)?;
         },
-        Commands::Engines => {
-            let installed = engine_manager.list_installed()?;
-            if installed.is_empty() {
-                info!("No OpenGothic engines installed.");
-            } else {
-                info!("Installed OpenGothic engines:");
-                for e in installed {
-                    info!("  - Version: {}", e.version);
+        Commands::Engines { action } => {
+            match action {
+                EngineCommands::List => {
+                    let installed = engine_manager.list_installed()?;
+                    if installed.is_empty() {
+                        info!("No OpenGothic engines installed.");
+                    } else {
+                        info!("Installed OpenGothic engines:");
+                        for e in installed {
+                            info!("  - Version: {} ({})", e.version, e.executable_path.display());
+                        }
+                    }
+                }
+                EngineCommands::InstallLatest => {
+                    let platform = EnginePlatform::current()
+                        .ok_or_else(|| anyhow::anyhow!("Unsupported platform"))?;
+                    info!("Installing latest OpenGothic engine...");
+                    let install = engine_manager.install_latest(platform, Some(Box::new(|current, total| {
+                        if total > 0 {
+                            let pct = (current as f64 / total as f64) * 100.0;
+                            info!("Download progress: {:.0}%", pct);
+                        }
+                    }))).await?;
+                    info!("Installed: {}", install.version);
+                    info!("Install dir: {}", install.install_dir.display());
+                    info!("Executable: {}", install.executable_path.display());
+                }
+                EngineCommands::SetActive { version } => {
+                    engine_manager.set_active_engine(version)?;
+                    info!("Active engine set to {}", version);
+                }
+                EngineCommands::Active => {
+                    let cfg = cfg_manager.load()?;
+                    match cfg.active_engine {
+                        Some(v) => info!("Active engine: {}", v),
+                        None => info!("Active engine: (none)"),
+                    }
+                }
+                EngineCommands::Dir => {
+                    info!("Engines dir: {}", engine_manager.engines_dir().display());
                 }
             }
-        },
+        }
         Commands::Mods => {
             let config = cfg_manager.load()?;
             // Find any detected game path to scan mods from
@@ -149,5 +201,14 @@ mod tests {
     #[test]
     fn verify_cli() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parse_engines_subcommands() {
+        let _ = Cli::parse_from(["ogl-cli", "engines", "list"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "install-latest"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "set-active", "opengothic-v1.0.1"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "active"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "dir"]);
     }
 }
