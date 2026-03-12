@@ -1,43 +1,32 @@
+mod app_state;
+mod runtime;
+mod window;
+mod sidebar;
+mod game_panel;
+
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Button, Orientation, Box, Label};
+use gtk4::Application;
+
+const APP_ID: &str = "com.github.pryoxar.OpenGothicLauncher";
 
 fn main() {
+    // Initialize tracing for debug logs
+    tracing_subscriber::fmt::init();
+
     let app = Application::builder()
-        .application_id("com.github.pryoxar.OpenGothicLauncher")
+        .application_id(APP_ID)
         .build();
 
-    app.connect_activate(build_ui);
-    app.run();
-}
-
-fn build_ui(app: &Application) {
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .title("OpenGothic Launcher")
-        .default_width(600)
-        .default_height(400)
-        .build();
-
-    let vbox = Box::new(Orientation::Vertical, 10);
-    vbox.set_margin_top(10);
-    vbox.set_margin_bottom(10);
-    vbox.set_margin_start(10);
-    vbox.set_margin_end(10);
-
-    let title_label = Label::new(Some("Welcome to OpenGothic Launcher"));
-    vbox.append(&title_label);
-
-    let launch_button = Button::with_label("Launch OpenGothic");
-    launch_button.connect_clicked(|_| {
-        println!("Launch button clicked! (Backend integration pending)");
+    app.connect_activate(|app| {
+        // Load persisted state from disk
+        let state = app_state::new_shared_state();
+        
+        // Build and present the main window
+        let win = window::build_window(app, &state);
+        win.present();
     });
-    vbox.append(&launch_button);
 
-    let engines_button = Button::with_label("Manage Engines");
-    vbox.append(&engines_button);
-
-    window.set_child(Some(&vbox));
-    window.present();
+    app.run();
 }
 
 #[cfg(test)]

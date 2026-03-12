@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
-use ogl_core::{config_manager::ConfigManager, engine_manager::EngineManager};
+use ogl_core::{ConfigManager, GameState};
+use ogl_core::engine_manager::EngineManager;
 use tracing::{info, error};
 
 #[derive(Parser)]
@@ -46,19 +47,20 @@ async fn main() -> Result<()> {
             ];
 
             let mut found_any = false;
+            let mut config = cfg_manager.load()?;
+
             for game in games.iter() {
                 match ogl_core::detect(*game) {
                     Ok(install) => {
                         info!("FOUND [{}]: {}", game.display_name(), install.root_path.display());
                         found_any = true;
                         
-                        // For MVP, if we haven't saved a path yet, save the first one we find
-                        let mut config = cfg_manager.load()?;
-                        if config.gothic_path.is_none() {
-                            config.gothic_path = Some(install.root_path.clone());
-                            cfg_manager.save(&config)?;
-                            info!("Automatically configured default path to: {}", install.root_path.display());
-                        }
+                        // Save per-game state
+                        let key = format!("{:?}", game);
+                        config.games.insert(key, GameState {
+                            install_path: Some(install.root_path.clone()),
+                            detected: true,
+                        });
                     }
                     Err(_) => {
                         info!("Not found: {}", game.display_name());
@@ -72,20 +74,16 @@ async fn main() -> Result<()> {
                     for game in games.iter() {
                         let game_name = game.display_name();
                         info!("Brute-forcing {}...", game_name);
-                        match ogl_core::detect_brute_force(*game, |_path| {
-                            // Printing every path is too noisy, but we can print some progress if we want.
-                            // We will just do nothing to keep output clean, maybe print once every 1000 items.
-                            // In GUI we will have a real progress bar.
-                        }) {
+                        match ogl_core::detect_brute_force(*game, |_path| {}) {
                             Ok(install) => {
                                 info!("FOUND [{}]: {}", game_name, install.root_path.display());
                                 found_any = true;
-                                let mut config = cfg_manager.load()?;
-                                if config.gothic_path.is_none() {
-                                    config.gothic_path = Some(install.root_path.clone());
-                                    cfg_manager.save(&config)?;
-                                }
-                                info!("Note: Stopping brute-force scan early to save time since an installation was found.");
+                                let key = format!("{:?}", game);
+                                config.games.insert(key, GameState {
+                                    install_path: Some(install.root_path.clone()),
+                                    detected: true,
+                                });
+                                info!("Note: Stopping brute-force scan early since an installation was found.");
                                 break;
                             }
                             Err(_) => {
@@ -99,6 +97,9 @@ async fn main() -> Result<()> {
                     error!("No Gothic installations found. Try running with `--scan-disk` or configure manually.");
                 }
             }
+
+            // Save all detected results
+            cfg_manager.save(&config)?;
         },
         Commands::Engines => {
             let installed = engine_manager.list_installed()?;
@@ -113,7 +114,12 @@ async fn main() -> Result<()> {
         },
         Commands::Mods => {
             let config = cfg_manager.load()?;
-            if let Some(path) = config.gothic_path {
+            // Find any detected game path to scan mods from
+            let gothic_path = config.games.values()
+                .find(|g| g.detected)
+                .and_then(|g| g.install_path.as_ref());
+
+            if let Some(path) = gothic_path {
                 let mod_manager = ogl_mods::ModManager::new(path);
                 match mod_manager.scan_mods() {
                     Ok(mods) => {
