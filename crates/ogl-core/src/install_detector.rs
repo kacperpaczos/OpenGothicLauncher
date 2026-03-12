@@ -95,14 +95,17 @@ pub struct GothicInstall {
 /// let install = detect(GothicGame::Gothic2NotR).expect("G2 NotR not found");
 /// println!("{}", install.root_path.display());
 /// ```
-pub fn detect(game: GothicGame) -> Result<GothicInstall, DetectorError> {
+pub fn detect<F>(game: GothicGame, mut on_progress: F) -> Result<GothicInstall, DetectorError>
+where
+    F: FnMut(&Path),
+{
     // Stage 1 – fast
-    if let Some(path) = stage1_fast(game) {
+    if let Some(path) = stage1_fast(game, &mut on_progress) {
         return Ok(GothicInstall { game, root_path: path });
     }
 
     // Stage 2 – heuristic shallow scan
-    if let Some(path) = stage2_heuristic(game) {
+    if let Some(path) = stage2_heuristic(game, &mut on_progress) {
         return Ok(GothicInstall { game, root_path: path });
     }
 
@@ -128,42 +131,100 @@ where
 // Internal: validation helpers
 // ---------------------------------------------------------------------------
 
+/// Helper for case-insensitive checking of path segments (fixes issues on Linux Wine/Proton)
+fn path_exists_ci(root: &Path, parts: &[&str]) -> bool {
+    let mut current = root.to_path_buf();
+    for part in parts {
+        let expected = part.to_lowercase();
+        let mut found = false;
+        if let Ok(entries) = std::fs::read_dir(&current) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().to_lowercase() == expected {
+                    current = entry.path();
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
 /// Check whether a candidate directory is a valid root for `game`.
 fn is_valid_root(root: &Path, game: GothicGame) -> bool {
     match game {
         GothicGame::Gothic1 => {
-            root.join("System").join("Gothic.exe").exists()
-                || root.join("System").exists() && root.join("Data").exists()
+            path_exists_ci(root, &["System", "Gothic.exe"])
+                || (path_exists_ci(root, &["System"]) && path_exists_ci(root, &["Data"]))
         }
         GothicGame::Gothic2 => {
-            let exe = root.join("System").join("Gothic2.exe");
-            let addon = root.join("Data").join("Addon.vdf");
-            exe.exists() && !addon.exists()
+            path_exists_ci(root, &["System", "Gothic2.exe"]) && !has_addon_vdf(root)
         }
         GothicGame::Gothic2NotR => {
-            let exe = root.join("System").join("Gothic2.exe");
-            let addon = root.join("Data").join("Addon.vdf");
-            exe.exists() && addon.exists()
+            path_exists_ci(root, &["System", "Gothic2.exe"]) && has_addon_vdf(root)
         }
         GothicGame::ChroniclesOfMyrtana => {
-            // Archolos: has Gothic2.exe + GothicStarter.exe or GothicStarter.ini
-            let exe = root.join("System").join("Gothic2.exe");
-            let starter = root.join("System").join("GothicStarter.exe");
-            let starter_ini = root.join("System").join("GothicStarter.ini");
-            exe.exists() && (starter.exists() || starter_ini.exists())
+            let exe = path_exists_ci(root, &["System", "Gothic2.exe"]);
+            let starter = path_exists_ci(root, &["System", "GothicStarter.exe"]);
+            let starter_ini = path_exists_ci(root, &["System", "GothicStarter.ini"]);
+            
+            // Standalone installations like GOG or Steam don't use GothicStarter, but have specific mod files/configs
+            let standalone_ini = path_exists_ci(root, &["System", "TheChroniclesOfMyrtana.ini"]);
+            let km_scripts = path_exists_ci(root, &["Data", "KM_Scripts.mod"]);
+            let km_scripts_pl = path_exists_ci(root, &["Data", "KM_ScriptsPL.mod"]);
+            
+            exe && (starter || starter_ini || standalone_ini || km_scripts || km_scripts_pl)
         }
         GothicGame::Gothic3 => {
-            root.join("Gothic3.exe").exists()
-                || root.join("Gothic III.exe").exists()
+            path_exists_ci(root, &["Gothic3.exe"]) || path_exists_ci(root, &["Gothic III.exe"])
         }
     }
 }
 
+/// Helper to check if any file ending with _Addon.vdf or exactly Addon.vdf exists in Data/
+fn has_addon_vdf(root: &Path) -> bool {
+    let mut data_dir = root.to_path_buf();
+    
+    // Find the actual case-sensitive Data directory
+    let mut found_data = false;
+    if let Ok(entries) = std::fs::read_dir(&data_dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().to_lowercase() == "data" {
+                data_dir = entry.path();
+                found_data = true;
+                break;
+            }
+        }
+    }
+    
+    if !found_data {
+        return false;
+    }
+
+    if let Ok(entries) = std::fs::read_dir(&data_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name == "addon.vdf" || name.ends_with("_addon.vdf") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Given a set of root prefixes, try appending each Steam subfolder and validate.
-fn find_in_roots(game: GothicGame, roots: &[PathBuf]) -> Option<PathBuf> {
+fn find_in_roots<F>(game: GothicGame, roots: &[PathBuf], on_progress: &mut F) -> Option<PathBuf>
+where
+    F: FnMut(&Path),
+{
     for root in roots {
+        on_progress(root);
         for subfolder in game.steam_folders() {
             let candidate = root.join(subfolder);
+            on_progress(&candidate);
             if is_valid_root(&candidate, game) {
                 return Some(candidate);
             }
@@ -176,9 +237,12 @@ fn find_in_roots(game: GothicGame, roots: &[PathBuf]) -> Option<PathBuf> {
 // Stage 1 – Fast (Registry / Well-known paths)
 // ---------------------------------------------------------------------------
 
-fn stage1_fast(game: GothicGame) -> Option<PathBuf> {
+fn stage1_fast<F>(game: GothicGame, on_progress: &mut F) -> Option<PathBuf>
+where
+    F: FnMut(&Path),
+{
     let roots = platform_known_roots(game);
-    find_in_roots(game, &roots)
+    find_in_roots(game, &roots, on_progress)
 }
 
 /// Build a list of platform-specific root prefixes for fast detection.
@@ -269,7 +333,36 @@ fn linux_roots(roots: &mut Vec<PathBuf>) {
             .join("common"),
     );
 
-    // Lutris default wine prefix location
+    // Additional common Wine/Lutris/Heroic prefix locations for GOG and Steam on Linux
+    let heroic_games = home.join("Games").join("Heroic");
+    if heroic_games.exists() {
+        if let Ok(entries) = std::fs::read_dir(&heroic_games) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    // E.g. ~/Games/Heroic/Prefixes/Gothic/pfx/drive_c/GOG Games
+                    roots.push(entry.path().join("pfx").join("drive_c").join("GOG Games"));
+                    roots.push(entry.path().join("pfx").join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps").join("common"));
+                    // E.g. ~/Games/Heroic/Gothic 2
+                    roots.push(entry.path());
+                }
+            }
+        }
+    }
+
+    let gog_games_linux = home.join("Games").join("gog");
+    if gog_games_linux.exists() {
+        if let Ok(entries) = std::fs::read_dir(&gog_games_linux) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    // Common prefix layout: ~/Games/gog/{game_slug}/drive_c/GOG Games/
+                    roots.push(entry.path().join("drive_c").join("GOG Games"));
+                    roots.push(entry.path().join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps").join("common"));
+                }
+            }
+        }
+    }
+
+    // Lutris default wine prefix location / Steam / GOG
     let lutris_games = home.join(".local").join("share").join("lutris").join("runners").join("wine");
     if lutris_games.exists() {
         roots.push(lutris_games);
@@ -296,20 +389,38 @@ fn macos_roots(roots: &mut Vec<PathBuf>) {
 // Stage 2 – Heuristic (shallow scan, depth <= 2)
 // ---------------------------------------------------------------------------
 
-fn stage2_heuristic(game: GothicGame) -> Option<PathBuf> {
-    let scan_roots = heuristic_scan_roots();
+fn stage2_heuristic<F>(game: GothicGame, on_progress: &mut F) -> Option<PathBuf>
+where
+    F: FnMut(&Path),
+{
+    let mut scan_roots = platform_known_roots(game);
+    scan_roots.extend(heuristic_scan_roots());
+    
+    // Deduplicate to avoid scanning the same root twice
+    scan_roots.sort();
+    scan_roots.dedup();
+
     for root in &scan_roots {
+        on_progress(root);
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if !path.is_dir() {
                     continue;
                 }
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                // Quick regex-like filter: folder must mention gothic / archolos / myrtana
-                if !name.contains("gothic") && !name.contains("archolos") && !name.contains("myrtana") {
+                
+                let name = entry.file_name().to_string_lossy().into_owned();
+                
+                // Skip hidden folders in heuristic roots (like ~/.cache) to speed up `/home` scanning
+                // Wait, if root is explicitly `.steam` (from known_roots), then `root` is `.steam`.
+                // Here `name` is the child of `root`. If `root` is `/home/user`, `name` is `.wine`.
+                // We should skip hidden folders when scanning general heuristic roots.
+                if name.starts_with('.') {
                     continue;
                 }
+                // We used to filter by name here (`name.contains("gothic")`), but that 
+                // prevents finding games inside intermediate store folders like `~/Games/gog/gothic 2`.
+                // So we just check the path and its immediate subdirectories.
                 if is_valid_root(&path, game) {
                     return Some(path);
                 }
@@ -317,8 +428,11 @@ fn stage2_heuristic(game: GothicGame) -> Option<PathBuf> {
                 if let Ok(sub) = std::fs::read_dir(&path) {
                     for sub_entry in sub.flatten() {
                         let sub_path = sub_entry.path();
-                        if sub_path.is_dir() && is_valid_root(&sub_path, game) {
-                            return Some(sub_path);
+                        if sub_path.is_dir() {
+                            on_progress(&sub_path);
+                            if is_valid_root(&sub_path, game) {
+                                return Some(sub_path);
+                            }
                         }
                     }
                 }
