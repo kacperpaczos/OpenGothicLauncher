@@ -1,7 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{ListBox, ListBoxRow, Label, Orientation, Box as GtkBox, SelectionMode};
-use std::rc::Rc;
-use std::cell::RefCell;
+
 
 use ogl_core::install_detector::GothicGame;
 use crate::app_state::SharedState;
@@ -43,7 +42,7 @@ where
         list_box.append(&row);
 
         // Mark the initially selected game
-        let state_borrow = state.borrow();
+        let state_borrow = state.lock().unwrap();
         if *game == state_borrow.selected_game {
             initial_row_idx = i as i32;
         }
@@ -55,13 +54,13 @@ where
     }
 
     // Connect selection change
-    let on_selected = Rc::new(RefCell::new(on_game_selected));
+    let on_selected = std::sync::Arc::new(std::sync::Mutex::new(on_game_selected));
     list_box.connect_row_selected(move |_, row| {
         if let Some(row) = row {
             let idx = row.index() as usize;
             let games = crate::app_state::AppState::sidebar_games();
             if let Some(game) = games.get(idx) {
-                (on_selected.borrow())(*game);
+                (on_selected.lock().unwrap())(*game);
             }
         }
     });
@@ -73,10 +72,10 @@ where
 fn game_short_name(game: GothicGame) -> &'static str {
     match game {
         GothicGame::Gothic1 => "Gothic",
+        GothicGame::Gothic2 => "Gothic II",
         GothicGame::Gothic2NotR => "Gothic II: NK",
         GothicGame::ChroniclesOfMyrtana => "Archolos",
         GothicGame::Gothic3 => "Gothic 3",
-        _ => "Unknown",
     }
 }
 
@@ -84,9 +83,9 @@ fn game_short_name(game: GothicGame) -> &'static str {
 fn game_icon(game: GothicGame) -> &'static str {
     match game {
         GothicGame::Gothic1 => "⚔️",
+        GothicGame::Gothic2 => "🏰",
         GothicGame::Gothic2NotR => "🏰",
         GothicGame::ChroniclesOfMyrtana => "📜",
         GothicGame::Gothic3 => "🐉",
-        _ => "🎮",
     }
 }

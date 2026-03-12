@@ -50,7 +50,9 @@ async fn main() -> Result<()> {
             let mut config = cfg_manager.load()?;
 
             for game in games.iter() {
-                match ogl_core::detect(*game) {
+                match ogl_core::detect(*game, |path| {
+                    tracing::debug!("Scanning: {}", path.display());
+                }) {
                     Ok(install) => {
                         info!("FOUND [{}]: {}", game.display_name(), install.root_path.display());
                         found_any = true;
