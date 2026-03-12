@@ -6,7 +6,6 @@ use gtk4::{
     Align, FileChooserAction, FileChooserDialog, ResponseType,
 };
 
-use ogl_core::install_detector::GothicGame;
 use ogl_core::config_manager::GameState;
 use crate::app_state::SharedState;
 use crate::runtime;
@@ -47,13 +46,14 @@ impl GamePanel {
             self.container.remove(&child);
         }
 
-        let state = self.state.borrow();
+        let state = self.state.lock().unwrap();
         let game = state.selected_game;
         let game_state = state.current_game_state();
         let has_engines = !state.installed_engines.is_empty();
         let detection_running = state.detection_running;
         let download_progress = state.download_progress;
         let error_msg = state.error_message.clone();
+        let detection_progress = state.detection_progress.clone();
         drop(state);
 
         // Title
@@ -92,7 +92,7 @@ impl GamePanel {
 
             if has_engines {
                 // ─── State C: Engine installed ───
-                let engines_state = self.state.borrow();
+                let engines_state = self.state.lock().unwrap();
                 let engine_label_text = if let Some(ref active) = engines_state.config.active_engine {
                     format!("OpenGothic Engine: {}", active)
                 } else if let Some(first) = engines_state.installed_engines.first() {
@@ -144,14 +144,29 @@ impl GamePanel {
         } else {
             // ─── State A: Game not detected ───
             if detection_running {
+                let scanning_box = GtkBox::new(Orientation::Vertical, 4);
+                
                 let scanning_label = Label::new(Some("🔍 Scanning for installation…"));
                 scanning_label.set_halign(Align::Start);
-                self.container.append(&scanning_label);
+                scanning_box.append(&scanning_label);
 
                 let spinner = gtk4::Spinner::new();
                 spinner.set_spinning(true);
-                spinner.set_margin_top(8);
-                self.container.append(&spinner);
+                spinner.set_halign(Align::Start);
+                scanning_box.append(&spinner);
+
+                if let Some(ref progress) = detection_progress {
+                    let p_lbl = Label::new(Some(&format!("Checking: {}", progress)));
+                    p_lbl.set_halign(Align::Start);
+                    p_lbl.add_css_class("dim-label");
+                    // Using wrap to prevent long paths from stretching the window
+                    p_lbl.set_wrap(true);
+                    p_lbl.set_wrap_mode(gtk4::pango::WrapMode::Char);
+                    scanning_box.append(&p_lbl);
+                }
+
+                scanning_box.set_margin_top(8);
+                self.container.append(&scanning_box);
             } else {
                 let not_found_label = Label::new(Some("⚠ Installation not found"));
                 not_found_label.set_halign(Align::Start);
@@ -185,19 +200,45 @@ impl GamePanel {
     // ─── Action handlers ───
 
     fn on_scan_clicked(state: &SharedState) {
-        let game = state.borrow().selected_game;
-        state.borrow_mut().detection_running = true;
+        let game = { state.lock().unwrap().selected_game };
+        { 
+            let mut s = state.lock().unwrap();
+            s.detection_running = true; 
+            s.detection_progress = None;
+        }
 
-        let state_weak = std::rc::Rc::downgrade(state);
+        let state_weak = std::sync::Arc::downgrade(state);
+        let progress_weak = state_weak.clone();
 
         // Run detection on the tokio runtime, send result back to GTK main thread
         runtime::background().spawn(async move {
-            let result = ogl_core::detect(game);
+            use std::sync::atomic::{AtomicI64, Ordering};
+            use std::sync::Arc;
+            
+            // Limit UI updates to every ~50ms to avoid flooding GTK event loop
+            let last_update = Arc::new(AtomicI64::new(0));
+
+            let result = ogl_core::detect(game, move |path| {
+                tracing::debug!("Scanning path: {}", path.display());
+                
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+                if now - last_update.load(Ordering::Relaxed) > 50 {
+                    last_update.store(now, Ordering::Relaxed);
+                    let path_str = path.display().to_string();
+                    let weak_clone = progress_weak.clone();
+                    glib::MainContext::default().invoke(move || {
+                        if let Some(state) = weak_clone.upgrade() {
+                            state.lock().unwrap().detection_progress = Some(path_str);
+                        }
+                    });
+                }
+            });
 
             glib::MainContext::default().invoke(move || {
                 if let Some(state) = state_weak.upgrade() {
-                    let mut s = state.borrow_mut();
+                    let mut s = state.lock().unwrap();
                     s.detection_running = false;
+                    s.detection_progress = None;
 
                     match result {
                         Ok(install) => {
@@ -237,7 +278,7 @@ impl GamePanel {
             if response == ResponseType::Accept {
                 if let Some(file) = dialog.file() {
                     if let Some(path) = file.path() {
-                        let mut s = state_ref.borrow_mut();
+                        let mut s = state_ref.lock().unwrap();
                         s.set_current_game_state(GameState {
                             install_path: Some(path),
                             detected: true,
@@ -254,8 +295,8 @@ impl GamePanel {
     }
 
     fn on_download_clicked(state: &SharedState) {
-        let state_weak = std::rc::Rc::downgrade(state);
-        state.borrow_mut().download_progress = Some(0.0);
+        let state_weak = std::sync::Arc::downgrade(state);
+        { state.lock().unwrap().download_progress = Some(0.0); }
 
         runtime::background().spawn(async move {
             // Fetch latest release info
@@ -264,7 +305,7 @@ impl GamePanel {
                 Err(e) => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
-                            let mut s = state.borrow_mut();
+                            let mut s = state.lock().unwrap();
                             s.download_progress = None;
                             s.error_message = Some(format!("Failed to fetch release: {}", e));
                         }
@@ -292,7 +333,7 @@ impl GamePanel {
                 None => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
-                            let mut s = state.borrow_mut();
+                            let mut s = state.lock().unwrap();
                             s.download_progress = None;
                             s.error_message = Some("No compatible engine asset found for this platform".to_string());
                         }
@@ -311,12 +352,27 @@ impl GamePanel {
             let _ = std::fs::create_dir_all(&engines_dir);
             let dest_path = engines_dir.join(&asset.name);
 
-            // Download (no SHA256 check for now — GitHub doesn't provide it in releases API)
-            match ogl_network::download_file(&asset.browser_download_url, &dest_path, None).await {
+            // Download progress callback
+            let progress_weak = state_weak.clone();
+
+            // Download
+            let result = ogl_network::download_file(&asset.browser_download_url, &dest_path, None, Some(Box::new(move |current, total| {
+                if total > 0 {
+                    let progress = current as f64 / total as f64;
+                    let weak_clone = progress_weak.clone();
+                    glib::MainContext::default().invoke(move || {
+                        if let Some(state) = weak_clone.upgrade() {
+                            state.lock().unwrap().download_progress = Some(progress);
+                        }
+                    });
+                }
+            }))).await;
+
+            match result {
                 Ok(()) => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
-                            let mut s = state.borrow_mut();
+                            let mut s = state.lock().unwrap();
                             s.download_progress = None;
                             s.config.active_engine = Some(release.tag_name.clone());
                             // Refresh engine list
@@ -331,7 +387,7 @@ impl GamePanel {
                 Err(e) => {
                     glib::MainContext::default().invoke(move || {
                         if let Some(state) = state_weak.upgrade() {
-                            let mut s = state.borrow_mut();
+                            let mut s = state.lock().unwrap();
                             s.download_progress = None;
                             s.error_message = Some(format!("Download failed: {}", e));
                         }
@@ -342,28 +398,40 @@ impl GamePanel {
     }
 
     fn on_launch_clicked(state: &SharedState) {
-        let s = state.borrow();
+        let s = state.lock().unwrap();
         let game_state = s.current_game_state();
-        let gothic_root = match game_state.install_path {
-            Some(ref p) => p.clone(),
+        let gothic_root = match game_state.install_path.as_ref() {
+            Some(p) => p.clone(),
             None => return,
         };
 
         // Find engine executable
-        let engine_path = if let Some(ref engine) = s.installed_engines.first() {
-            engine.executable_path.clone()
+        let engine_path = if let Some(ref active_version) = s.config.active_engine {
+             s.installed_engines.iter()
+                .find(|e| e.version == *active_version)
+                .map(|e| e.executable_path.clone())
+                .or_else(|| s.installed_engines.first().map(|e| e.executable_path.clone()))
         } else {
-            return;
+            s.installed_engines.first().map(|e| e.executable_path.clone())
+        };
+
+        let engine_path = match engine_path {
+            Some(p) => p,
+            None => {
+                drop(s);
+                return;
+            }
         };
         drop(s);
 
-        let state_weak = std::rc::Rc::downgrade(state);
+        let state_weak = std::sync::Arc::downgrade(state);
         runtime::background().spawn(async move {
             let executor = ogl_executor::Executor::new(&engine_path);
             if let Err(e) = executor.launch(&gothic_root, &[]).await {
                 glib::MainContext::default().invoke(move || {
                     if let Some(state) = state_weak.upgrade() {
-                        state.borrow_mut().error_message = Some(format!("Launch failed: {}", e));
+                        let mut s = state.lock().unwrap();
+                        s.error_message = Some(format!("Launch failed: {}", e));
                     }
                 });
             }

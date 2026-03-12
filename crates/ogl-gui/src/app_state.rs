@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use ogl_core::install_detector::GothicGame;
 use ogl_core::config_manager::{LauncherConfig, GameState, ConfigManager};
@@ -17,6 +16,8 @@ pub struct AppState {
     pub selected_game: GothicGame,
     /// True while a background detection scan is running.
     pub detection_running: bool,
+    /// Currently scanned path during detection hook.
+    pub detection_progress: Option<String>,
     /// Download progress 0.0..1.0 while an engine is being downloaded, None otherwise.
     pub download_progress: Option<f64>,
     /// List of locally installed OpenGothic engine versions.
@@ -40,6 +41,7 @@ impl AppState {
             config,
             selected_game: GothicGame::Gothic2NotR,
             detection_running: false,
+            detection_progress: None,
             download_progress: None,
             installed_engines,
             error_message: None,
@@ -69,6 +71,7 @@ impl AppState {
     pub fn sidebar_games() -> Vec<GothicGame> {
         vec![
             GothicGame::Gothic1,
+            GothicGame::Gothic2,
             GothicGame::Gothic2NotR,
             GothicGame::ChroniclesOfMyrtana,
             GothicGame::Gothic3,
@@ -77,9 +80,9 @@ impl AppState {
 }
 
 /// Shared, mutable reference to AppState used across GTK widgets.
-pub type SharedState = Rc<RefCell<AppState>>;
+pub type SharedState = Arc<Mutex<AppState>>;
 
 /// Create a new shared AppState.
 pub fn new_shared_state() -> SharedState {
-    Rc::new(RefCell::new(AppState::load()))
+    Arc::new(Mutex::new(AppState::load()))
 }
