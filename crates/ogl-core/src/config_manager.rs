@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use dirs::config_local_dir;
+use crate::app_dirs::AppDirs;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -10,8 +10,8 @@ pub enum ConfigError {
     IoError(#[from] std::io::Error),
     #[error("Failed to parse config: {0}")]
     ParseError(#[from] serde_json::Error),
-    #[error("Configuration directory not found")]
-    NoConfigDir,
+    #[error("App directories error: {0}")]
+    DirsError(#[from] crate::app_dirs::AppDirsError),
 }
 
 /// Per-game persistent state (serialized in state.json).
@@ -39,8 +39,8 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     pub fn new() -> Result<Self, ConfigError> {
-        let base_dir = config_local_dir().ok_or(ConfigError::NoConfigDir)?;
-        let cfg_dir = base_dir.join("OpenGothicLauncher");
+        let app_dirs = AppDirs::new()?;
+        let cfg_dir = app_dirs.config_dir().to_path_buf();
         Self::with_dir(cfg_dir)
     }
 

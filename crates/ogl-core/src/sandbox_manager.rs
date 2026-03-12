@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use dirs::data_local_dir;
+use crate::app_dirs::AppDirs;
 
 #[derive(Debug, Error)]
 pub enum SandboxError {
     #[error("I/O Error: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Runtime data directory not found")]
-    NoDataDir,
+    #[error("App directories error: {0}")]
+    DirsError(#[from] crate::app_dirs::AppDirsError),
 }
 
 pub struct SandboxManager {
@@ -16,8 +16,8 @@ pub struct SandboxManager {
 
 impl SandboxManager {
     pub fn new() -> Result<Self, SandboxError> {
-        let base_dir = data_local_dir().ok_or(SandboxError::NoDataDir)?;
-        let sandboxes_dir = base_dir.join("OpenGothicLauncher").join("sandboxes");
+        let app_dirs = AppDirs::new()?;
+        let sandboxes_dir = app_dirs.sandboxes_dir();
         Self::with_dir(sandboxes_dir)
     }
 

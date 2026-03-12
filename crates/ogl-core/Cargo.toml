@@ -10,6 +10,8 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dirs.workspace = true
+zip.workspace = true
+ogl-network = { path = "../ogl-network" }
 
 # Windows registry access for Stage 1 Steam/GOG detection
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -1,4 +1,5 @@
 pub mod install_detector;
+pub mod app_dirs;
 pub mod config_manager;
 pub mod engine_manager;
 pub mod sandbox_manager;
@@ -12,3 +13,5 @@ pub use install_detector::{
 pub use config_manager::{
     ConfigManager, LauncherConfig, GameState, ConfigError,
 };
+
+pub use app_dirs::{AppDirs, AppDirsError};
