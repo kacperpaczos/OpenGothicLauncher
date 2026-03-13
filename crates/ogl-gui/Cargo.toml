@@ -7,7 +7,12 @@ edition.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+glib.workspace = true
 gtk4 = "0.9"
 
 ogl-core = { path = "../ogl-core" }

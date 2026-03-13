@@ -1,25 +1,36 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use dirs::config_local_dir;
+use crate::app_dirs::AppDirs;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("Failed to read config file: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Failed to parse config: {0}")]
-    ParseError(#[from] toml::de::Error),
-    #[error("Failed to serialize config: {0}")]
-    SerializeError(#[from] toml::ser::Error),
-    #[error("Configuration directory not found")]
-    NoConfigDir,
+    ParseError(#[from] serde_json::Error),
+    #[error("App directories error: {0}")]
+    DirsError(#[from] crate::app_dirs::AppDirsError),
+}
+
+/// Per-game persistent state (serialized in state.json).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GameState {
+    /// Detected installation path on disk.
+    pub install_path: Option<PathBuf>,
+    /// Whether the game was successfully detected.
+    pub detected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LauncherConfig {
-    pub gothic_path: Option<PathBuf>,
+    /// Currently selected OpenGothic engine version tag (e.g. "v1.0.4").
     pub active_engine: Option<String>,
+    /// Currently active sandbox/profile name.
     pub active_profile: Option<String>,
+    /// Per-game detection state, keyed by game variant name.
+    pub games: HashMap<String, GameState>,
 }
 
 pub struct ConfigManager {
@@ -28,8 +39,8 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     pub fn new() -> Result<Self, ConfigError> {
-        let base_dir = config_local_dir().ok_or(ConfigError::NoConfigDir)?;
-        let cfg_dir = base_dir.join("OpenGothicLauncher");
+        let app_dirs = AppDirs::new()?;
+        let cfg_dir = app_dirs.config_dir().to_path_buf();
         Self::with_dir(cfg_dir)
     }
 
@@ -41,7 +52,7 @@ impl ConfigManager {
     }
 
     pub fn config_path(&self) -> PathBuf {
-        self.cfg_dir.join("config.toml")
+        self.cfg_dir.join("state.json")
     }
 
     pub fn load(&self) -> Result<LauncherConfig, ConfigError> {
@@ -50,13 +61,13 @@ impl ConfigManager {
             return Ok(LauncherConfig::default());
         }
         let content = std::fs::read_to_string(path)?;
-        let cfg = toml::from_str(&content)?;
+        let cfg = serde_json::from_str(&content)?;
         Ok(cfg)
     }
 
     pub fn save(&self, config: &LauncherConfig) -> Result<(), ConfigError> {
         let path = self.config_path();
-        let content = toml::to_string(config)?;
+        let content = serde_json::to_string_pretty(config)?;
         std::fs::write(path, content)?;
         Ok(())
     }
@@ -76,19 +87,39 @@ mod tests {
         
         // Should return default if not exists
         let auto_loaded = manager.load().unwrap();
-        assert!(auto_loaded.gothic_path.is_none());
+        assert!(auto_loaded.games.is_empty());
 
         // Save
         let mut cfg = LauncherConfig::default();
-        cfg.gothic_path = Some(PathBuf::from("/test/gothic"));
-        cfg.active_engine = Some("1.0.4".to_string());
+        cfg.games.insert("Gothic2NotR".to_string(), GameState {
+            install_path: Some(PathBuf::from("/test/gothic")),
+            detected: true,
+        });
+        cfg.active_engine = Some("v1.0.4".to_string());
         
         manager.save(&cfg).unwrap();
         
         // Reload and verify
         let reloaded = manager.load().unwrap();
-        assert_eq!(reloaded.gothic_path, Some(PathBuf::from("/test/gothic")));
-        assert_eq!(reloaded.active_engine, Some("1.0.4".to_string()));
+        let game = reloaded.games.get("Gothic2NotR").unwrap();
+        assert_eq!(game.install_path, Some(PathBuf::from("/test/gothic")));
+        assert!(game.detected);
+        assert_eq!(reloaded.active_engine, Some("v1.0.4".to_string()));
         assert!(reloaded.active_profile.is_none());
+    }
+
+    #[test]
+    fn test_config_file_is_json() {
+        let temp_dir = tempdir().unwrap();
+        let manager = ConfigManager::with_dir(temp_dir.path().to_path_buf()).unwrap();
+        
+        let cfg = LauncherConfig::default();
+        manager.save(&cfg).unwrap();
+        
+        let content = std::fs::read_to_string(manager.config_path()).unwrap();
+        // Should be valid JSON
+        let _: serde_json::Value = serde_json::from_str(&content).unwrap();
+        // File should be named state.json
+        assert!(manager.config_path().file_name().unwrap().to_str().unwrap() == "state.json");
     }
 }

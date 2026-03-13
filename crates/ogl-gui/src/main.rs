@@ -1,43 +1,52 @@
+mod app_state;
+mod runtime;
+mod window;
+mod sidebar;
+mod game_panel;
+mod engine_window;
+
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Button, Orientation, Box, Label};
+use gtk4::Application;
+
+
+const APP_ID: &str = "com.github.paczos.OpenGothicLauncher";
 
 fn main() {
+    // Initialize tracing for debug logs to both stdout and a file
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("OpenGothicLauncher")
+        .join("logs");
+        
+    std::fs::create_dir_all(&config_dir).unwrap_or_default();
+    
+    let file_appender = tracing_appender::rolling::daily(config_dir, "ogl-gui.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(
+            // Write to stdout and the rotating file
+            tracing_subscriber::fmt::writer::MakeWriterExt::and(std::io::stdout, non_blocking)
+        )
+        .init();
+        
+    tracing::info!("Starting OpenGothicLauncher GUI...");
+
     let app = Application::builder()
-        .application_id("com.github.pryoxar.OpenGothicLauncher")
+        .application_id(APP_ID)
         .build();
 
-    app.connect_activate(build_ui);
-    app.run();
-}
-
-fn build_ui(app: &Application) {
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .title("OpenGothic Launcher")
-        .default_width(600)
-        .default_height(400)
-        .build();
-
-    let vbox = Box::new(Orientation::Vertical, 10);
-    vbox.set_margin_top(10);
-    vbox.set_margin_bottom(10);
-    vbox.set_margin_start(10);
-    vbox.set_margin_end(10);
-
-    let title_label = Label::new(Some("Welcome to OpenGothic Launcher"));
-    vbox.append(&title_label);
-
-    let launch_button = Button::with_label("Launch OpenGothic");
-    launch_button.connect_clicked(|_| {
-        println!("Launch button clicked! (Backend integration pending)");
+    app.connect_activate(|app| {
+        // Load persisted state from disk
+        let state = app_state::new_shared_state();
+        
+        // Build and present the main window
+        let win = window::build_window(app, &state);
+        win.present();
     });
-    vbox.append(&launch_button);
 
-    let engines_button = Button::with_label("Manage Engines");
-    vbox.append(&engines_button);
-
-    window.set_child(Some(&vbox));
-    window.present();
+    app.run();
 }
 
 #[cfg(test)]

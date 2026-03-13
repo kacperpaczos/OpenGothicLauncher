@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
-use ogl_core::{config_manager::ConfigManager, engine_manager::EngineManager};
+use ogl_core::{ConfigManager, GameState};
+use ogl_core::engine_manager::{EngineManager, EnginePlatform};
 use tracing::{info, error};
 
 #[derive(Parser)]
@@ -19,10 +20,30 @@ enum Commands {
         #[arg(long)]
         scan_disk: bool,
     },
-    /// List installed OpenGothic engines
-    Engines,
+    /// Manage OpenGothic engines
+    Engines {
+        #[command(subcommand)]
+        action: EngineCommands,
+    },
     /// List detected mods
     Mods,
+}
+
+#[derive(Subcommand)]
+enum EngineCommands {
+    /// List installed engines
+    List,
+    /// Install the latest engine for the current platform
+    InstallLatest,
+    /// Set active engine version
+    SetActive {
+        /// Version tag (e.g. opengothic-v1.0.3549)
+        version: String,
+    },
+    /// Show active engine
+    Active,
+    /// Show engines directory
+    Dir,
 }
 
 #[tokio::main]
@@ -46,19 +67,22 @@ async fn main() -> Result<()> {
             ];
 
             let mut found_any = false;
+            let mut config = cfg_manager.load()?;
+
             for game in games.iter() {
-                match ogl_core::detect(*game) {
+                match ogl_core::detect(*game, |path| {
+                    tracing::debug!("Scanning: {}", path.display());
+                }) {
                     Ok(install) => {
                         info!("FOUND [{}]: {}", game.display_name(), install.root_path.display());
                         found_any = true;
                         
-                        // For MVP, if we haven't saved a path yet, save the first one we find
-                        let mut config = cfg_manager.load()?;
-                        if config.gothic_path.is_none() {
-                            config.gothic_path = Some(install.root_path.clone());
-                            cfg_manager.save(&config)?;
-                            info!("Automatically configured default path to: {}", install.root_path.display());
-                        }
+                        // Save per-game state
+                        let key = format!("{:?}", game);
+                        config.games.insert(key, GameState {
+                            install_path: Some(install.root_path.clone()),
+                            detected: true,
+                        });
                     }
                     Err(_) => {
                         info!("Not found: {}", game.display_name());
@@ -72,20 +96,16 @@ async fn main() -> Result<()> {
                     for game in games.iter() {
                         let game_name = game.display_name();
                         info!("Brute-forcing {}...", game_name);
-                        match ogl_core::detect_brute_force(*game, |_path| {
-                            // Printing every path is too noisy, but we can print some progress if we want.
-                            // We will just do nothing to keep output clean, maybe print once every 1000 items.
-                            // In GUI we will have a real progress bar.
-                        }) {
+                        match ogl_core::detect_brute_force(*game, |_path| {}) {
                             Ok(install) => {
                                 info!("FOUND [{}]: {}", game_name, install.root_path.display());
                                 found_any = true;
-                                let mut config = cfg_manager.load()?;
-                                if config.gothic_path.is_none() {
-                                    config.gothic_path = Some(install.root_path.clone());
-                                    cfg_manager.save(&config)?;
-                                }
-                                info!("Note: Stopping brute-force scan early to save time since an installation was found.");
+                                let key = format!("{:?}", game);
+                                config.games.insert(key, GameState {
+                                    install_path: Some(install.root_path.clone()),
+                                    detected: true,
+                                });
+                                info!("Note: Stopping brute-force scan early since an installation was found.");
                                 break;
                             }
                             Err(_) => {
@@ -99,21 +119,61 @@ async fn main() -> Result<()> {
                     error!("No Gothic installations found. Try running with `--scan-disk` or configure manually.");
                 }
             }
+
+            // Save all detected results
+            cfg_manager.save(&config)?;
         },
-        Commands::Engines => {
-            let installed = engine_manager.list_installed()?;
-            if installed.is_empty() {
-                info!("No OpenGothic engines installed.");
-            } else {
-                info!("Installed OpenGothic engines:");
-                for e in installed {
-                    info!("  - Version: {}", e.version);
+        Commands::Engines { action } => {
+            match action {
+                EngineCommands::List => {
+                    let installed = engine_manager.list_installed()?;
+                    if installed.is_empty() {
+                        info!("No OpenGothic engines installed.");
+                    } else {
+                        info!("Installed OpenGothic engines:");
+                        for e in installed {
+                            info!("  - Version: {} ({})", e.version, e.executable_path.display());
+                        }
+                    }
+                }
+                EngineCommands::InstallLatest => {
+                    let platform = EnginePlatform::current()
+                        .ok_or_else(|| anyhow::anyhow!("Unsupported platform"))?;
+                    info!("Installing latest OpenGothic engine...");
+                    let install = engine_manager.install_latest(platform, Some(Box::new(|current, total| {
+                        if total > 0 {
+                            let pct = (current as f64 / total as f64) * 100.0;
+                            info!("Download progress: {:.0}%", pct);
+                        }
+                    }))).await?;
+                    info!("Installed: {}", install.version);
+                    info!("Install dir: {}", install.install_dir.display());
+                    info!("Executable: {}", install.executable_path.display());
+                }
+                EngineCommands::SetActive { version } => {
+                    engine_manager.set_active_engine(version)?;
+                    info!("Active engine set to {}", version);
+                }
+                EngineCommands::Active => {
+                    let cfg = cfg_manager.load()?;
+                    match cfg.active_engine {
+                        Some(v) => info!("Active engine: {}", v),
+                        None => info!("Active engine: (none)"),
+                    }
+                }
+                EngineCommands::Dir => {
+                    info!("Engines dir: {}", engine_manager.engines_dir().display());
                 }
             }
-        },
+        }
         Commands::Mods => {
             let config = cfg_manager.load()?;
-            if let Some(path) = config.gothic_path {
+            // Find any detected game path to scan mods from
+            let gothic_path = config.games.values()
+                .find(|g| g.detected)
+                .and_then(|g| g.install_path.as_ref());
+
+            if let Some(path) = gothic_path {
                 let mod_manager = ogl_mods::ModManager::new(path);
                 match mod_manager.scan_mods() {
                     Ok(mods) => {
@@ -141,5 +201,14 @@ mod tests {
     #[test]
     fn verify_cli() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parse_engines_subcommands() {
+        let _ = Cli::parse_from(["ogl-cli", "engines", "list"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "install-latest"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "set-active", "opengothic-v1.0.1"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "active"]);
+        let _ = Cli::parse_from(["ogl-cli", "engines", "dir"]);
     }
 }

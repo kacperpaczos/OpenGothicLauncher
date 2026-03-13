@@ -14,10 +14,13 @@ pub enum DownloadError {
     HashMismatch { expected: String, actual: String },
 }
 
+pub type ProgressCallback = Box<dyn FnMut(u64, u64) + Send>;
+
 pub async fn download_file<P: AsRef<Path>>(
     url: &str,
     dest: P,
     expected_sha256: Option<&str>,
+    mut on_progress: Option<ProgressCallback>,
 ) -> Result<(), DownloadError> {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("OpenGothicLauncher"));
@@ -27,12 +30,20 @@ pub async fn download_file<P: AsRef<Path>>(
         .build()?;
 
     let mut response = client.get(url).send().await?.error_for_status()?;
+    let total_size = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+
     let mut file = tokio::fs::File::create(dest.as_ref()).await?;
     let mut hasher = Sha256::new();
 
     while let Some(chunk) = response.chunk().await? {
         file.write_all(&chunk).await?;
         hasher.update(&chunk);
+        
+        downloaded += chunk.len() as u64;
+        if let Some(ref mut cb) = on_progress {
+            (cb)(downloaded, total_size);
+        }
     }
     file.flush().await?;
 
@@ -82,7 +93,7 @@ mod tests {
         let expected_hash = hex::encode(hasher.finalize());
 
         // Download with correct hash
-        download_file(&url, &dest, Some(&expected_hash)).await.unwrap();
+        download_file(&url, &dest, Some(&expected_hash), None).await.unwrap();
         
         assert!(dest.exists());
         let downloaded = fs::read(&dest).unwrap();
@@ -110,7 +121,7 @@ mod tests {
         // Use deliberately wrong hash
         let wrong_hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
-        let result = download_file(&url, &dest, Some(wrong_hash)).await;
+        let result = download_file(&url, &dest, Some(wrong_hash), None).await;
         
         assert!(result.is_err());
         match result {

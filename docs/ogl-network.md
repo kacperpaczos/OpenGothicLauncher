@@ -4,9 +4,9 @@
 
 ## Key Responsibilities
 
-1. **API Integration (`releases`)**: Uses `reqwest` to interact with the GitHub Releases API (specifically `Try/OpenGothic`). It fetches the JSON payload for the latest releases to find downloadable engine archives.
+1. **Release Discovery (`releases`)**: Fetches the GitHub releases HTML page for `Try/OpenGothic` and parses release tags to build deterministic download URLs.
 2. **Secure Downloading (`downloads`)**: Streams large archive files asynchronously in chunks.
-3. **Integrity Verification**: As chunks are streamed, it computes a SHA-256 hash using the `sha2` crate. Once the download finishes, it validates the checksum against the expected hash from the GitHub release. If the validation fails, the corrupted file is automatically deleted.
+3. **Integrity Verification**: As chunks are streamed, it computes a SHA-256 hash using the `sha2` crate. If an expected hash is provided, the download is validated and corrupted files are deleted.
 
 ## Architecture
 
