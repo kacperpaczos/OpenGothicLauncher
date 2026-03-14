@@ -11,11 +11,12 @@ tracing-appender.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-dirs.workspace = true
 glib.workspace = true
 gtk4 = "0.9"
+gdk-pixbuf = "0.20"
 
 ogl-core = { path = "../ogl-core" }
 ogl-network = { path = "../ogl-network" }
 ogl-executor = { path = "../ogl-executor" }
-ogl-mods = { path = "../ogl-mods" }
+ogl-infra = { path = "../ogl-infra" }
+ogl-assets = { path = "../ogl-assets" }

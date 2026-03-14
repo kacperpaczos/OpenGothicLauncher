@@ -4,19 +4,32 @@ mod window;
 mod sidebar;
 mod game_panel;
 mod engine_window;
+mod view_models;
 
 use gtk4::prelude::*;
 use gtk4::Application;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use ogl_core::LauncherService;
+use ogl_core::ports::AppPaths;
+use ogl_infra::{
+    TomlConfigStore, StdAppPaths, StdFileSystem, StdInstallDetector, StdModFilesProvider,
+    StdPlatformProvider, ZipArchiveExtractor,
+};
+use ogl_network::{ReqwestDownloader, ReqwestReleaseProvider};
+use ogl_executor::TokioGameRunner;
+use crate::view_models::{AppUiState, AppViewModel, GamePanelViewModel};
+use crate::app_state::AppContext;
 
 
 const APP_ID: &str = "com.github.paczos.OpenGothicLauncher";
 
 fn main() {
     // Initialize tracing for debug logs to both stdout and a file
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("OpenGothicLauncher")
-        .join("logs");
+    let config_dir = StdAppPaths::new()
+        .map(|p| p.config_dir().join("logs"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("./logs"));
         
     std::fs::create_dir_all(&config_dir).unwrap_or_default();
     
@@ -38,15 +51,53 @@ fn main() {
         .build();
 
     app.connect_activate(|app| {
-        // Load persisted state from disk
-        let state = app_state::new_shared_state();
+        let service = build_service().unwrap_or_else(|e| {
+            panic!("Failed to build service: {}", e);
+        });
+
+        let ctx = Arc::new(AppContext::new(service));
+        let (config, installed_engines) = runtime::background().block_on(async {
+            let config = ctx.service.load_config().await.unwrap_or_default();
+            let engines = ctx.service.list_installed_engines().await.unwrap_or_default();
+            (config, engines)
+        });
+
+        let state = Arc::new(Mutex::new(AppUiState::new(config, installed_engines)));
+        let app_vm = AppViewModel::new(ctx.clone(), state.clone());
+        let game_panel_vm = GamePanelViewModel::new(app_vm.ctx(), app_vm.state());
         
         // Build and present the main window
-        let win = window::build_window(app, &state);
+        let win = window::build_window(app, &state, game_panel_vm);
         win.present();
     });
 
     app.run();
+}
+
+fn build_service() -> anyhow::Result<LauncherService> {
+    let paths = Arc::new(StdAppPaths::new()?);
+    let fs = Arc::new(StdFileSystem::new());
+    let release_provider = Arc::new(ReqwestReleaseProvider::new());
+    let downloader = Arc::new(ReqwestDownloader::new());
+    let extractor = Arc::new(ZipArchiveExtractor::new());
+    let config_store = Arc::new(TomlConfigStore::new(paths.clone(), fs.clone()));
+    let install_detector = Arc::new(StdInstallDetector::new());
+    let mod_files = Arc::new(StdModFilesProvider::new());
+    let platform = Arc::new(StdPlatformProvider::new());
+    let runner = Arc::new(TokioGameRunner::new());
+
+    Ok(LauncherService::new(
+        paths,
+        fs,
+        release_provider,
+        downloader,
+        extractor,
+        config_store,
+        install_detector,
+        mod_files,
+        platform,
+        runner,
+    ))
 }
 
 #[cfg(test)]

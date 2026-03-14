@@ -1,10 +1,14 @@
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Label, Orientation, Button, ListBox, ListBoxRow};
 
-use crate::app_state::SharedState;
-use ogl_core::engine_manager::EngineManager;
+use crate::view_models::SharedUiState;
+use crate::view_models::EngineManagerViewModel;
 
-pub fn open_engine_manager_window(state: &SharedState, parent: Option<&gtk4::Window>) -> gtk4::Window {
+pub fn open_engine_manager_window(
+    state: &SharedUiState,
+    view_model: &EngineManagerViewModel,
+    parent: Option<&gtk4::Window>,
+) -> gtk4::Window {
     let window = gtk4::Window::builder()
         .title("OpenGothic Engine Manager")
         .default_width(520)
@@ -34,7 +38,7 @@ pub fn open_engine_manager_window(state: &SharedState, parent: Option<&gtk4::Win
     engines_dir_label.set_wrap(true);
     root.append(&engines_dir_label);
 
-    let list_header = Label::new(Some("Installed engines"));
+    let list_header = Label::new(Some("Available engines"));
     list_header.set_halign(gtk4::Align::Start);
     list_header.add_css_class("title-3");
     list_header.set_margin_top(8);
@@ -53,19 +57,24 @@ pub fn open_engine_manager_window(state: &SharedState, parent: Option<&gtk4::Win
     refresh_btn.set_halign(gtk4::Align::Start);
     root.append(&refresh_btn);
 
-    let state_ref = state.clone();
-    let list_box_ref = list_box.clone();
-    let active_label_ref = active_label.clone();
+    let vm_ref = view_model.clone();
     refresh_btn.connect_clicked(move |_| {
-        refresh_engine_list(&list_box_ref, &active_label_ref, &state_ref);
+        vm_ref.refresh();
     });
 
     // Initial populate
-    refresh_engine_list(&list_box, &active_label, state);
+    view_model.refresh();
+    engines_dir_label.set_text(&view_model.engines_dir_label());
 
-    match EngineManager::new() {
-        Ok(mgr) => engines_dir_label.set_text(mgr.engines_dir().to_string_lossy().as_ref()),
-        Err(e) => engines_dir_label.set_text(&format!("Failed to resolve engines dir: {}", e)),
+    // Periodic refresh for async updates
+    {
+        let list_box_ref = list_box.clone();
+        let active_label_ref = active_label.clone();
+        let state_ref = state.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+            refresh_engine_list(&list_box_ref, &active_label_ref, &state_ref);
+            glib::ControlFlow::Continue
+        });
     }
 
     window.set_child(Some(&root));
@@ -73,20 +82,34 @@ pub fn open_engine_manager_window(state: &SharedState, parent: Option<&gtk4::Win
     window
 }
 
-fn refresh_engine_list(list_box: &ListBox, active_label: &Label, state: &SharedState) {
+fn refresh_engine_list(list_box: &ListBox, active_label: &Label, state: &SharedUiState) {
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
     }
 
     let s = state.lock().unwrap();
-    if s.installed_engines.is_empty() {
+    if s.available_releases.is_empty() {
         let row = ListBoxRow::new();
-        row.set_child(Some(&Label::new(Some("No engines installed"))));
+        row.set_child(Some(&Label::new(Some("No release data available"))));
         list_box.append(&row);
     } else {
-        for engine in &s.installed_engines {
+        for release in &s.available_releases {
+            let installed = s.installed_engines.iter().find(|engine| {
+                engine.version == release.tag || engine.version == release.name
+            });
+
+            let label_text = if let Some(installed) = installed {
+                format!(
+                    "{}  •  installed ({})",
+                    release.tag,
+                    installed.executable_path.display()
+                )
+            } else {
+                format!("{}  •  not installed", release.tag)
+            };
+
             let row = ListBoxRow::new();
-            let label = Label::new(Some(&format!("{}  •  {}", engine.version, engine.executable_path.display())));
+            let label = Label::new(Some(&label_text));
             label.set_halign(gtk4::Align::Start);
             label.set_wrap(true);
             row.set_child(Some(&label));
