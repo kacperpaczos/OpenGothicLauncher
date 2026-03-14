@@ -111,6 +111,53 @@ pub async fn fetch_latest_release_from_html(custom_url: Option<&str>) -> Result<
     })
 }
 
+pub async fn fetch_releases_from_html(custom_url: Option<&str>) -> Result<Vec<GitHubRelease>, ReleaseError> {
+    let url = custom_url.unwrap_or("https://github.com/Try/OpenGothic/releases");
+
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static("OpenGothicLauncher"));
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .default_headers(headers)
+        .build()?;
+
+    let html = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let tags = parse_release_tags_from_html(&html);
+    if tags.is_empty() {
+        return Err(ReleaseError::NoTags);
+    }
+
+    let asset_names = ["opengothic_linux.zip", "opengothic_osx.zip", "opengothic_win.zip"];
+    let releases = tags
+        .into_iter()
+        .map(|tag| GitHubRelease {
+            tag_name: tag.clone(),
+            name: tag.clone(),
+            assets: asset_names
+                .into_iter()
+                .map(|name| GitHubAsset {
+                    name: name.to_string(),
+                    browser_download_url: format!(
+                        "https://github.com/Try/OpenGothic/releases/download/{}/{}",
+                        tag, name
+                    ),
+                    size: 0,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(releases)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
