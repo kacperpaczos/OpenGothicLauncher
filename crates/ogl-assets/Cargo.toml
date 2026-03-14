@@ -1,7 +1,6 @@
 [package]
-name = "ogl-mods"
+name = "ogl-assets"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ogl-core = { path = "../ogl-core" }

@@ -13,4 +13,4 @@ tokio.workspace = true
 ogl-core = { path = "../ogl-core" }
 ogl-network = { path = "../ogl-network" }
 ogl-executor = { path = "../ogl-executor" }
-ogl-mods = { path = "../ogl-mods" }
+ogl-infra = { path = "../ogl-infra" }

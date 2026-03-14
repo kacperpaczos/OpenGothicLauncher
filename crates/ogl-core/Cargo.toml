@@ -4,18 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-dirs.workspace = true
-zip.workspace = true
-ogl-network = { path = "../ogl-network" }
-
-# Windows registry access for Stage 1 Steam/GOG detection
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-registry = "0.4"
+async-trait = "0.1"
 
 [dev-dependencies]
 tempfile.workspace = true

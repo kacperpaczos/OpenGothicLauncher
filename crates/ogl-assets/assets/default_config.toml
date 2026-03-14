@@ -1,0 +1,4 @@
+# OpenGothicLauncher default config (TOML)
+# Leave keys omitted to use defaults.
+
+[games]

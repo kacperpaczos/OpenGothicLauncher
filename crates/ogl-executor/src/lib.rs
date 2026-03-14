@@ -3,6 +3,10 @@ use std::process::Stdio;
 use thiserror::Error;
 use tokio::process::Command;
 use tracing::{info, error};
+use async_trait::async_trait;
+use ogl_core::domain::launch::GameLaunch;
+use ogl_core::CoreError;
+use ogl_core::ports::GameProcessRunner;
 
 #[derive(Debug, Error)]
 pub enum ExecutorError {
@@ -56,6 +60,26 @@ impl Executor {
 
         info!("OpenGothic finished successfully");
         Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct TokioGameRunner;
+
+impl TokioGameRunner {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl GameProcessRunner for TokioGameRunner {
+    async fn launch(&self, launch: &GameLaunch) -> Result<(), CoreError> {
+        let executor = Executor::new(&launch.executable_path);
+        executor
+            .launch(&launch.gothic_root, &launch.mods)
+            .await
+            .map_err(|e| CoreError::External(e.to_string()))
     }
 }
 
