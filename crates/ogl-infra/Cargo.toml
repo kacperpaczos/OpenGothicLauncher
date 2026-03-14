@@ -1,0 +1,21 @@
+[package]
+name = "ogl-infra"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ogl-core = { path = "../ogl-core" }
+ogl-network = { path = "../ogl-network" }
+ogl-assets = { path = "../ogl-assets" }
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+directories.workspace = true
+zip.workspace = true
+tokio.workspace = true
+async-trait = "0.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-registry = "0.4"
