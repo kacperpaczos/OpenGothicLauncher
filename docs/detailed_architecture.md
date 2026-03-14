@@ -1,6 +1,6 @@
 # Szczegółowa Architektura - OpenGothicLauncher
 
-Projekt OpenGothicLauncher przechodzi ewolucję w stronę **Architektury Hexagonalnej** (Ports & Adapters) oraz **Clean Architecture**. Ten dokument opisuje struktury, przepływy i zasady rządzące tą architekturą.
+Projekt OpenGothicLauncher przeszedł ewolucję w stronę **Architektury Hexagonalnej** (Ports & Adapters) oraz **Clean Architecture**. Ten dokument opisuje struktury, przepływy i zasady rządzące tą architekturą.
 
 ## 1. Filozofia: Separacja Wykonania od Logiki
 
@@ -29,41 +29,74 @@ graph TD
     Process -.-> |Implementuje| Ports
 ```
 
-## 2. Warstwy w `ogl-core`
+## 2. Mapa Warstw i Komponentów
 
-### A. Domain (`src/domain/`)
-Zawiera "czyste" struktury danych i logikę, która nie zmienia się niezależnie od tego, jakiej bazy danych czy systemu używamy.
-- **Przykłady**: `GothicInstall`, `EngineVersion`, `LauncherConfig`.
-- **Zasada**: Nie może importować niczego z innych modułów `ogl-core` (poza innymi modułami domain).
+### A. Warstwa Domeny (`src/domain/`)
+Zawiera "czyste" struktury danych i logikę biznesową. Zero zależności od IO.
 
-### B. Ports (`src/ports/`)
-To zbiór cech (traits) w Rucie, które definiują, co aplikacja musi potrafić zrobić "na zewnątrz".
-- `InstallDetector`: "Znajdź mi gry na dysku".
-- `EngineDownloader`: "Pobierz plik pod ten URL".
-- `GameProcessRunner`: "Uruchom silnik z tymi flagami".
+| Moduł | Kluczowe Obiekty | Opis |
+|-------|------------------|------|
+| `config` | `LauncherConfig`, `GameState` | Centralny stan aplikacji i gier. |
+| `engine` | `EngineVersion`, `EngineAsset`, `EngineRelease` | Modele binarne silnika OpenGothic. |
+| `install`| `GothicGame`, `GothicInstall` | Definicja wariantów gry i ich lokalizacji. |
+| `launch` | `GameLaunch` | Pełny kontekst potrzebny do startu procesu. |
+| `mods`   | `ModInfo`, `ModManager` | Metadane o plikach `.vdf` i `.mod`. |
 
-### C. Services (`src/services/`)
-Tu odbywa się główna kontrola przepływu (orchestration). Serwisy przyjmują obiekty implementujące Porty (`Arc<dyn Port>`) i używają ich do realizacji celów biznesowych.
-- **LauncherService**: Najważniejszy serwis. Koordynuje sprawdzenie wersji silnika, wykrycie gry i finalne uruchomienie procesu.
+### B. Warstwa Portów (`src/ports/`)
+Definiuje "kontrakty" z zewnętrznym światem. Są to traity Rusta.
 
-## 3. Infrastruktura i Adaptery (`ogl-infra`, `ogl-network` itp.)
+| Port | Odpowiedzialność | Kto Implementuje (Adapter) |
+|------|------------------|----------------------------|
+| `AppPaths` | Zwraca ścieżki do folderów danych/config. | `ogl-infra::paths` |
+| `FileSystem` | Operacje dyskowe (exists, read, write). | `ogl-infra::filesystem` |
+| `ConfigStore` | Trwały zapis i odczyt konfiguracji. | `ogl-infra::config_store` |
+| `InstallDetector` | Wykrywanie gier (Steam/Registry itp.). | `ogl-infra::install_detector` |
+| `ReleaseProvider` | Sprawdzanie nowych wersji na GitHubie. | `ogl-network::releases` |
+| `EngineDownloader`| Pobieranie plików binarnych silnika. | `ogl-network::downloads` |
+| `ArchiveExtractor`| Rozpakowywanie archiwów `.zip`. | `ogl-infra::archive` |
+| `GameProcessRunner`| Fizyczne uruchomienie procesu gry. | `ogl-executor` |
+| `ModFilesProvider`| Dostarczanie listy plików modów. | `ogl-infra::mod_files` |
+| `PlatformProvider`| Rozpoznawanie systemu operacyjnego. | `ogl-infra::platform` |
 
-Adaptery to "mięśnie" aplikacji. Zawierają kod specyficzny dla technologii.
-- **`ogl-infra`**: Implementuje porty związane z dyskiem i rejestrem Windows.
-- **`ogl-network`**: Implementuje porty związane z komunikacją HTTP.
-- **`ogl-executor`**: Implementuje port związany z uruchamianiem procesów.
+### C. Warstwa Serwisów (`src/services/`)
+Logika "mózgu" aplikacji, która koordynuje współpracę portów.
 
-## 4. Iniekcja Zależności (Dependency Injection)
+**`LauncherService`**:
+- `install_open_gothic`: Pobiera wersję, rozpakowuje ją i ustawia jako aktywną.
+- `launch_profile`: Zbiera dane o instalacji, wybiera silnik i zleca start runnerowi.
+- `scan_for_installations`: Przeszukuje system za pomocą detektora instalacji.
+- `list_installed_engines`: Przeszukuje dysk w poszukiwaniu gotowych do użycia silników.
 
-Wszystkie zależności są wstrzykiwane w momencie startu aplikacji (w `main.rs` w `ogl-gui` lub `ogl-cli`).
+## 3. Przepływ Informacji (Control Flow)
 
-**Przykład przepływu:**
-1. `ogl-gui` tworzy instancję `NetworkAdapter` i `FilesystemAdapter`.
-2. `ogl-gui` tworzy `LauncherService`, przekazując mu te adaptery.
-3. Gdy użytkownik kliknie "Graj", `LauncherService` wywołuje port `runner.launch()`, nie wiedząc, że pod spodem `ogl-executor` właśnie tworzy proces w systemie Linux/Windows.
+1. **Start**: `ogl-gui` prosi `LauncherService` o listę silników.
+2. **Akcja Core**: `LauncherService` wywołuje port `AppPaths` (by wiedzieć gdzie szukać) i `FileSystem` (by sprawdzić co tam jest).
+3. **Wynik**: Serwis zwraca listę `EngineVersion` (obiekt domeny), którą GUI następnie wyświetla.
 
-## 5. Korzyści
+```mermaid
+sequenceDiagram
+    participant UI as ogl-gui
+    participant LS as LauncherService
+    participant PS as Port: ConfigStore
+    participant PN as Port: EngineDownloader
+    
+    UI->>LS: install_open_gothic("v1.0")
+    LS->>PS: load()
+    LS->>PN: download(url, path)
+    PN-->>LS: OK
+    LS->>PS: save(new_active_engine)
+    LS-->>UI: EngineInstall (Domain)
+```
 
-- **Łatwe Testowanie**: Możemy stworzyć `MockFilesystem` i przetestować całą logikę instalacji silnika bez dotykania prawdziwego dysku.
-- **Wieloplatformowość**: Specyficzny kod dla Windows (np. rejestr) jest odizolowany w adapterach, a logika core pozostaje identyczna.
-- **Czysty Kod**: Programista pracujący nad interfejsem nie musi martwić się o to, jak sprawdzany jest kod SHA256 pobranego pliku – to zadanie adaptera sieciowego.
+## 4. Iniekcja Zależności (DI)
+
+Wszystkie adaptery są pakowane w `Arc<dyn Port>` i przekazywane do `LauncherService` przy tworzeniu. Dzięki temu:
+- `LauncherService` może być używany w `ogl-cli` bez zmian.
+- Możemy łatwo dodać nowy adapter, np. `CloudConfigStore`, bez modyfikacji logiki wewnątrz `ogl-core`.
+
+## 5. Zasada Zależności (DIP)
+
+W Clean Architecture zależności zawsze kierują się **do wewnątrz**.
+- `ogl-infra` zależy od `ogl-core` (bo implementuje jej porty).
+- `ogl-core` **nie zależy** od `ogl-infra`, `ogl-network` ani `ogl-executor`.
+- `ogl-core` zależy tylko od samej siebie (swoich portów i domeny).
