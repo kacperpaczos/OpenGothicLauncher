@@ -1,17 +1,15 @@
-pub mod install_detector;
-pub mod app_dirs;
-pub mod config_manager;
-pub mod engine_manager;
-pub mod sandbox_manager;
+pub mod domain;
+pub mod ports;
+pub mod services;
 
-// Re-export the main public API surface
-pub use install_detector::{
-    detect, detect_brute_force,
-    GothicGame, GothicInstall, DetectorError,
+mod errors;
+
+pub use crate::errors::{AppError, CoreError};
+pub use crate::domain::{
+    config::{LauncherConfig, GameState},
+    engine::{EngineRelease, EngineAsset, EngineVersion, EngineInstall, EnginePlatform},
+    install::{GothicGame, GothicInstall},
+    launch::GameLaunch,
+    mods::{ModInfo, ModManager},
 };
-
-pub use config_manager::{
-    ConfigManager, LauncherConfig, GameState, ConfigError,
-};
-
-pub use app_dirs::{AppDirs, AppDirsError};
+pub use crate::services::LauncherService;
