@@ -1,7 +1,14 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
-use ogl_core::{ConfigManager, GameState};
-use ogl_core::engine_manager::{EngineManager, EnginePlatform};
+use ogl_core::{GameState, LauncherService, GothicGame};
+use ogl_infra::{
+    TomlConfigStore, StdAppPaths, StdFileSystem, StdInstallDetector, StdModFilesProvider,
+    StdPlatformProvider, ZipArchiveExtractor,
+};
+use ogl_network::{ReqwestDownloader, ReqwestReleaseProvider};
+use ogl_executor::TokioGameRunner;
+use std::sync::Arc;
+use std::str::FromStr;
 use tracing::{info, error};
 
 #[derive(Parser)]
@@ -48,70 +55,47 @@ enum EngineCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     let cli = Cli::parse();
 
-    let cfg_manager = ConfigManager::new()?;
-    let engine_manager = EngineManager::new()?;
+    let service = build_service()?;
 
     match &cli.command {
         Commands::Detect { scan_disk } => {
             info!("Running detection for all Gothic variants...");
-            let games = vec![
-                ogl_core::GothicGame::Gothic1,
-                ogl_core::GothicGame::Gothic2,
-                ogl_core::GothicGame::Gothic2NotR,
-                ogl_core::GothicGame::ChroniclesOfMyrtana,
-                ogl_core::GothicGame::Gothic3,
-            ];
 
             let mut found_any = false;
-            let mut config = cfg_manager.load()?;
+            let mut config = service.load_config().await?;
 
-            for game in games.iter() {
-                match ogl_core::detect(*game, |path| {
-                    tracing::debug!("Scanning: {}", path.display());
-                }) {
-                    Ok(install) => {
-                        info!("FOUND [{}]: {}", game.display_name(), install.root_path.display());
-                        found_any = true;
-                        
-                        // Save per-game state
-                        let key = format!("{:?}", game);
-                        config.games.insert(key, GameState {
-                            install_path: Some(install.root_path.clone()),
-                            detected: true,
-                        });
-                    }
-                    Err(_) => {
-                        info!("Not found: {}", game.display_name());
-                    }
-                }
+            let installs = service.scan_for_installations(Arc::new(|path| {
+                tracing::debug!("Scanning: {}", path.display());
+            })).await?;
+
+            for install in installs {
+                info!("FOUND [{}]: {}", install.game.display_name(), install.root_path.display());
+                found_any = true;
+                let key = install.game.profile_id();
+                config.games.insert(key, GameState {
+                    install_path: Some(install.root_path.clone()),
+                    detected: true,
+                });
             }
 
             if !found_any {
                 if *scan_disk {
                     info!("No installations found via fast scan. Starting full disk brute-force scan...");
-                    for game in games.iter() {
-                        let game_name = game.display_name();
-                        info!("Brute-forcing {}...", game_name);
-                        match ogl_core::detect_brute_force(*game, |_path| {}) {
-                            Ok(install) => {
-                                info!("FOUND [{}]: {}", game_name, install.root_path.display());
-                                found_any = true;
-                                let key = format!("{:?}", game);
-                                config.games.insert(key, GameState {
-                                    install_path: Some(install.root_path.clone()),
-                                    detected: true,
-                                });
-                                info!("Note: Stopping brute-force scan early since an installation was found.");
-                                break;
-                            }
-                            Err(_) => {
-                                info!("Brute-force failed to find {}.", game_name);
-                            }
-                        }
+                    let installs = service.scan_for_installations_brute_force(Arc::new(_path_noop)).await?;
+                    for install in installs {
+                        info!("FOUND [{}]: {}", install.game.display_name(), install.root_path.display());
+                        found_any = true;
+                        let key = install.game.profile_id();
+                        config.games.insert(key, GameState {
+                            install_path: Some(install.root_path.clone()),
+                            detected: true,
+                        });
                     }
                 }
                 
@@ -120,13 +104,12 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Save all detected results
-            cfg_manager.save(&config)?;
+            service.save_config(&config).await?;
         },
         Commands::Engines { action } => {
             match action {
                 EngineCommands::List => {
-                    let installed = engine_manager.list_installed()?;
+                    let installed = service.list_installed_engines().await?;
                     if installed.is_empty() {
                         info!("No OpenGothic engines installed.");
                     } else {
@@ -137,10 +120,8 @@ async fn main() -> Result<()> {
                     }
                 }
                 EngineCommands::InstallLatest => {
-                    let platform = EnginePlatform::current()
-                        .ok_or_else(|| anyhow::anyhow!("Unsupported platform"))?;
                     info!("Installing latest OpenGothic engine...");
-                    let install = engine_manager.install_latest(platform, Some(Box::new(|current, total| {
+                    let install = service.install_open_gothic("latest", Some(Box::new(|current, total| {
                         if total > 0 {
                             let pct = (current as f64 / total as f64) * 100.0;
                             info!("Download progress: {:.0}%", pct);
@@ -151,38 +132,33 @@ async fn main() -> Result<()> {
                     info!("Executable: {}", install.executable_path.display());
                 }
                 EngineCommands::SetActive { version } => {
-                    engine_manager.set_active_engine(version)?;
+                    service.set_active_engine(version).await?;
                     info!("Active engine set to {}", version);
                 }
                 EngineCommands::Active => {
-                    let cfg = cfg_manager.load()?;
+                    let cfg = service.load_config().await?;
                     match cfg.active_engine {
                         Some(v) => info!("Active engine: {}", v),
                         None => info!("Active engine: (none)"),
                     }
                 }
                 EngineCommands::Dir => {
-                    info!("Engines dir: {}", engine_manager.engines_dir().display());
+                    info!("Engines dir: {}", service.engines_dir()?.display());
                 }
             }
         }
         Commands::Mods => {
-            let config = cfg_manager.load()?;
+            let config = service.load_config().await?;
             // Find any detected game path to scan mods from
-            let gothic_path = config.games.values()
-                .find(|g| g.detected)
-                .and_then(|g| g.install_path.as_ref());
+            let maybe_game_path = config.games.iter()
+                .find(|(_, g)| g.detected)
+                .and_then(|(k, g)| GothicGame::from_str(k).ok().map(|game| (game, g.install_path.as_ref())));
 
-            if let Some(path) = gothic_path {
-                let mod_manager = ogl_mods::ModManager::new(path);
-                match mod_manager.scan_mods() {
-                    Ok(mods) => {
-                        info!("Detected mods:");
-                        for m in mods {
-                            info!("  - {} (VDF: {})", m.name, m.is_vdf);
-                        }
-                    }
-                    Err(e) => error!("Failed to scan mods: {}", e),
+            if let Some((game, Some(path))) = maybe_game_path {
+                let mods = service.scan_mods(game, path).await?;
+                info!("Detected mods:");
+                for m in mods {
+                    info!("  - {} (VDF: {})", m.name, m.is_vdf);
                 }
             } else {
                 error!("No Gothic path configured. Run `detect` first.");
@@ -192,6 +168,34 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+fn build_service() -> Result<LauncherService> {
+    let paths = Arc::new(StdAppPaths::new()?);
+    let fs = Arc::new(StdFileSystem::new());
+    let release_provider = Arc::new(ReqwestReleaseProvider::new());
+    let downloader = Arc::new(ReqwestDownloader::new());
+    let extractor = Arc::new(ZipArchiveExtractor::new());
+    let config_store = Arc::new(TomlConfigStore::new(paths.clone(), fs.clone()));
+    let install_detector = Arc::new(StdInstallDetector::new());
+    let mod_files = Arc::new(StdModFilesProvider::new());
+    let platform = Arc::new(StdPlatformProvider::new());
+    let runner = Arc::new(TokioGameRunner::new());
+
+    Ok(LauncherService::new(
+        paths,
+        fs,
+        release_provider,
+        downloader,
+        extractor,
+        config_store,
+        install_detector,
+        mod_files,
+        platform,
+        runner,
+    ))
+}
+
+fn _path_noop(_path: &std::path::Path) {}
 
 #[cfg(test)]
 mod tests {

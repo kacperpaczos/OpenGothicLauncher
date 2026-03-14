@@ -2,13 +2,13 @@ use gtk4::prelude::*;
 use gtk4::{ListBox, ListBoxRow, Label, Orientation, Box as GtkBox, SelectionMode};
 
 
-use ogl_core::install_detector::GothicGame;
-use crate::app_state::SharedState;
+use ogl_core::GothicGame;
+use crate::view_models::{AppUiState, SharedUiState};
 
 /// Build the sidebar ListBox with one row per game.
 ///
 /// When the user clicks a row, `on_game_selected` is called with the new game.
-pub fn build_sidebar<F>(state: &SharedState, on_game_selected: F) -> ListBox
+pub fn build_sidebar<F>(state: &SharedUiState, on_game_selected: F) -> ListBox
 where
     F: Fn(GothicGame) + 'static,
 {
@@ -17,7 +17,7 @@ where
     list_box.add_css_class("navigation-sidebar");
     list_box.set_vexpand(true);
 
-    let games = crate::app_state::AppState::sidebar_games();
+    let games = AppUiState::sidebar_games();
     let mut initial_row_idx: i32 = 0;
 
     for (i, game) in games.iter().enumerate() {
@@ -58,7 +58,7 @@ where
     list_box.connect_row_selected(move |_, row| {
         if let Some(row) = row {
             let idx = row.index() as usize;
-            let games = crate::app_state::AppState::sidebar_games();
+            let games = AppUiState::sidebar_games();
             if let Some(game) = games.get(idx) {
                 (on_selected.lock().unwrap())(*game);
             }
