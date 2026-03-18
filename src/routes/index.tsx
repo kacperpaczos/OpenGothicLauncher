@@ -1,58 +1,35 @@
-import { component$, useSignal, $ } from "@builder.io/qwik";
+import { component$, useContext } from "@builder.io/qwik";
 import type { DocumentHead } from "@builder.io/qwik-city";
-import { invoke } from "@tauri-apps/api/core";
-
-import qwikLogo from "../assets/qwik.svg";
+import { LauncherContext } from "../context/launcher-context";
+import { GamePanel } from "../components/game-panel/game-panel";
+import { GameDetailsPanel } from "../components/game-details-panel/game-details-panel";
 
 export default component$(() => {
-  const greetMsg = useSignal("");
-  const name = useSignal("");
+  const state = useContext(LauncherContext);
 
-  const greet = $(async () => {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg.value = await invoke("greet", { name: name.value });
-  });
+  if (!state.viewModel) return null;
+
+  const gameState = state.viewModel.config.games[state.selectedGame] || {
+    installPath: null,
+    detected: false,
+  };
 
   return (
-    <main class="container">
-      <h1>Welcome to Tauri + Qwik</h1>
-
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://qwik.dev" target="_blank">
-          <img src={qwikLogo} class="logo qwik" alt="Qwik logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and Qwik logos to learn more.</p>
-
-      <form
-        class="row"
-        preventdefault:submit
-        onSubmit$={greet}
-      >
-        <input
-          id="greet-input"
-          bind:value={name}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg.value}</p>
-    </main>
+    <>
+      <main class="main-content">
+        <GamePanel game={state.selectedGame} state={gameState} />
+      </main>
+      <GameDetailsPanel game={state.selectedGame} />
+    </>
   );
 });
 
 export const head: DocumentHead = {
-  title: "Welcome to Tauri",
+  title: "OpenGothic Launcher",
   meta: [
     {
       name: "description",
-      content: "Tauri + Qwik",
+      content: "Modern launcher for Gothic games",
     },
   ],
 };
