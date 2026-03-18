@@ -2,13 +2,12 @@ import { defineConfig } from "vite";
 import { qwikVite } from "@builder.io/qwik/optimizer";
 import { qwikCity } from "@builder.io/qwik-city/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
-
+import tailwindcss from "@tailwindcss/vite";
 const host = process.env.TAURI_DEV_HOST;
-
 // https://vite.dev/config/
+
 export default defineConfig(async () => ({
   plugins: [qwikCity(), qwikVite(), tsconfigPaths()],
-
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
