@@ -44,3 +44,11 @@ dist-ssr
 *.sln
 *.sw?
 .vite/
+
+
+.nx/cache
+.nx/workspace-data
+
+# Build/temp artifacts
+server/
+tmp/
