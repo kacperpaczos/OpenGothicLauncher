@@ -30,5 +30,6 @@ ogl-network = { path = "../crates/ogl-network" }
 ogl-executor = { path = "../crates/ogl-executor" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 tokio.workspace = true
 
