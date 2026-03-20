@@ -5,7 +5,7 @@ use ogl_core::ports::{DownloadProgress, EngineDownloader, ReleaseProvider};
 use tracing::debug;
 
 use crate::downloads::download_file;
-use crate::releases::{fetch_latest_release_from_html, fetch_releases_from_html, GitHubRelease};
+use crate::releases::{fetch_latest_release, fetch_releases_from_html, GitHubRelease};
 
 #[derive(Clone, Default)]
 pub struct ReqwestReleaseProvider;
@@ -20,14 +20,14 @@ impl ReqwestReleaseProvider {
 impl ReleaseProvider for ReqwestReleaseProvider {
     async fn latest_release(&self) -> Result<EngineRelease, CoreError> {
         debug!("Fetching latest OpenGothic release metadata");
-        let release = fetch_latest_release_from_html(None)
+        let release = fetch_latest_release(None)
             .await
             .map_err(|e| CoreError::External(e.to_string()))?;
         Ok(map_release(release))
     }
 
     async fn list_releases(&self) -> Result<Vec<EngineRelease>, CoreError> {
-        debug!("Fetching OpenGothic release list");
+        debug!("Fetching OpenGothic release list via HTML scraping");
         let releases = fetch_releases_from_html(None)
             .await
             .map_err(|e| CoreError::External(e.to_string()))?;

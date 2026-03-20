@@ -69,61 +69,57 @@ fn parse_release_tags_from_html(html: &str) -> Vec<String> {
     tags
 }
 
-pub async fn fetch_latest_release_from_html(custom_url: Option<&str>) -> Result<GitHubRelease, ReleaseError> {
-    let url = custom_url.unwrap_or("https://github.com/Try/OpenGothic/releases");
 
-    let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static("OpenGothicLauncher"));
+/// Parse actual asset download links from the GitHub expanded_assets HTML fragment.
+/// Returns Vec of (filename, full_download_url).
+fn parse_assets_from_expanded_html(html: &str, _tag: &str) -> Vec<GitHubAsset> {
+    let needle = "/Try/OpenGothic/releases/download/";
+    let mut assets = Vec::new();
+    let mut search = html;
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .default_headers(headers)
-        .build()?;
+    while let Some(start) = search.find(needle) {
+        let after = &search[start..];
+        let end = after
+            .find(|c: char| c == '"' || c == '\'' || c == '?' || c == '#' || c == ' ')
+            .unwrap_or(after.len());
+        let rel_path = &after[..end];
+        // rel_path = /Try/OpenGothic/releases/download/{tag}/{filename}
+        let full_url = format!("https://github.com{}", rel_path);
+        let filename = rel_path.rsplit('/').next().unwrap_or("").to_string();
+        
+        // Skip source archives and empty filenames, only include actual engine zips
+        if !filename.is_empty()
+            && !filename.ends_with(".tar.gz")
+            && !assets.iter().any(|a: &GitHubAsset| a.name == filename)
+        {
+            assets.push(GitHubAsset {
+                name: filename,
+                browser_download_url: full_url,
+                size: 0,
+            });
+        }
+        search = &after[end..];
+    }
 
-    let html = client
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-
-    let tags = parse_release_tags_from_html(&html);
-    let tag_name = tags.first().cloned().ok_or(ReleaseError::NoTags)?;
-
-    let asset_names = ["opengothic_linux.zip", "opengothic_osx.zip", "opengothic_win.zip"];
-    let assets = asset_names
-        .into_iter()
-        .map(|name| GitHubAsset {
-            name: name.to_string(),
-            browser_download_url: format!(
-                "https://github.com/Try/OpenGothic/releases/download/{}/{}",
-                tag_name, name
-            ),
-            size: 0,
-        })
-        .collect();
-
-    Ok(GitHubRelease {
-        tag_name: tag_name.clone(),
-        name: tag_name,
-        assets,
-    })
+    assets
 }
 
+/// Fetches all releases by scraping the GitHub HTML releases page for tags,
+/// then querying expanded_assets/{tag} for each tag to discover real download links.
 pub async fn fetch_releases_from_html(custom_url: Option<&str>) -> Result<Vec<GitHubRelease>, ReleaseError> {
-    let url = custom_url.unwrap_or("https://github.com/Try/OpenGothic/releases");
+    let base_url = custom_url.unwrap_or("https://github.com/Try/OpenGothic/releases");
 
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("OpenGothicLauncher"));
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
         .default_headers(headers)
         .build()?;
 
+    // Step 1: Fetch the releases page and extract all tags
     let html = client
-        .get(url)
+        .get(base_url)
         .send()
         .await?
         .error_for_status()?
@@ -135,25 +131,30 @@ pub async fn fetch_releases_from_html(custom_url: Option<&str>) -> Result<Vec<Gi
         return Err(ReleaseError::NoTags);
     }
 
-    let asset_names = ["opengothic_linux.zip", "opengothic_osx.zip", "opengothic_win.zip"];
-    let releases = tags
-        .into_iter()
-        .map(|tag| GitHubRelease {
-            tag_name: tag.clone(),
-            name: tag.clone(),
-            assets: asset_names
-                .into_iter()
-                .map(|name| GitHubAsset {
-                    name: name.to_string(),
-                    browser_download_url: format!(
-                        "https://github.com/Try/OpenGothic/releases/download/{}/{}",
-                        tag, name
-                    ),
-                    size: 0,
-                })
-                .collect(),
-        })
-        .collect();
+    // Step 2: For each tag, fetch expanded_assets to get real download links
+    let mut releases = Vec::new();
+    for tag in &tags {
+        let assets_url = format!(
+            "https://github.com/Try/OpenGothic/releases/expanded_assets/{}",
+            tag
+        );
+        match client.get(&assets_url).send().await {
+            Ok(resp) => {
+                if let Ok(assets_html) = resp.text().await {
+                    let assets = parse_assets_from_expanded_html(&assets_html, tag);
+                    releases.push(GitHubRelease {
+                        tag_name: tag.clone(),
+                        name: tag.clone(),
+                        assets,
+                    });
+                }
+            }
+            Err(_) => {
+                // If we can't fetch assets for a tag, skip it
+                continue;
+            }
+        }
+    }
 
     Ok(releases)
 }
