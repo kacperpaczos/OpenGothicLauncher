@@ -6,9 +6,9 @@ mod errors;
 
 pub use crate::errors::{AppError, CoreError};
 pub use crate::domain::{
-    config::{LauncherConfig, GameState},
+    config::{LauncherConfig, GameState, Profile, ModboxConfig},
     engine::{EngineRelease, EngineAsset, EngineVersion, EngineInstall, EnginePlatform},
-    install::{GothicGame, GothicInstall},
+    install::{GothicGame, GothicInstall, GameMetadata},
     launch::GameLaunch,
     mods::{ModInfo, ModManager},
 };

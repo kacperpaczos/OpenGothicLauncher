@@ -45,6 +45,10 @@ impl FileSystem for StdFileSystem {
         fs::remove_file(path).await.map_err(|e| CoreError::Io(e.to_string()))
     }
 
+    async fn remove_dir_all(&self, path: &Path) -> Result<(), CoreError> {
+        fs::remove_dir_all(path).await.map_err(|e| CoreError::Io(e.to_string()))
+    }
+
     async fn read_to_string(&self, path: &Path) -> Result<String, CoreError> {
         fs::read_to_string(path).await.map_err(|e| CoreError::Io(e.to_string()))
     }

@@ -90,7 +90,7 @@ impl EngineManager {
     }
 
     pub async fn fetch_latest_release(&self) -> Result<GitHubRelease, EngineError> {
-        Ok(ogl_network::fetch_latest_release_from_html(None).await?)
+        Ok(ogl_network::fetch_latest_release(None).await?)
     }
 
     pub async fn download_latest(

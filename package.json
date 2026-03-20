@@ -1,0 +1,48 @@
+{
+  "name": "opengothic-launcher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "qwik build",
+    "build.client": "vite build",
+    "build.preview": "vite build --ssr src/entry.preview.tsx",
+    "build.server": "qwik check-client src dist && vite build -c adapters/static/vite.config.ts",
+    "build.types": "tsc --incremental --noEmit",
+    "dev": "vite --mode ssr",
+    "preview": "qwik build preview && vite preview --open",
+    "start": "vite --open --mode ssr",
+    "tauri": "tauri",
+    "qwik": "qwik"
+  },
+  "devDependencies": {
+    "@builder.io/qwik": "^1.19.2",
+    "@builder.io/qwik-city": "^1.19.2",
+    "@qwik-ui/headless": "^0.7.4",
+    "@qwik-ui/styled": "^0.4.1",
+    "@qwik-ui/utils": "^0.3.3",
+    "@qwikest/icons": "^0.0.13",
+    "@tailwindcss/vite": "^4.1.4",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "20.19.0",
+    "class-variance-authority": "0.7.1",
+    "ignore": "^6.0.2",
+    "ms": "^2.1.3",
+    "nx": "^22.5.4",
+    "prettier": "^3.8.1",
+    "prettier-plugin-tailwindcss": "^0.6.11",
+    "qwik-ui": "^0.4.3",
+    "tailwindcss": "^4.1.4",
+    "tw-animate-css": "1.3.4",
+    "typescript": "5.4.5",
+    "undici": "*",
+    "vite": "7.3.1",
+    "vite-tsconfig-paths": "^4.2.1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "nx": {}
+}

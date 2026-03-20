@@ -91,8 +91,16 @@ impl LauncherService {
     }
 
     pub async fn list_available_releases(&self) -> Result<Vec<EngineRelease>, AppError> {
+        let platform = self.platform.current_platform()?;
         let releases = self.release_provider.list_releases().await?;
-        Ok(releases)
+        
+        // Only show releases that have a compatible asset for the current platform
+        let filtered: Vec<EngineRelease> = releases.into_iter()
+            .filter(|r| self.find_asset(r, platform).is_some())
+            .collect();
+            
+        tracing::debug!("Found {} available releases for {:?}", filtered.len(), platform);
+        Ok(filtered)
     }
 
     pub async fn install_open_gothic(
@@ -101,15 +109,17 @@ impl LauncherService {
         progress: Option<DownloadProgress>,
     ) -> Result<EngineInstall, AppError> {
         let platform = self.platform.current_platform()?;
-        let release = self.release_provider.latest_release().await?;
-        info!("Resolved latest OpenGothic release: {}", release.tag);
+        let release = if version == "latest" {
+            let r = self.release_provider.latest_release().await?;
+            info!("Resolved latest OpenGothic release: {}", r.tag);
+            r
+        } else {
+            let releases = self.release_provider.list_releases().await?;
+            releases.into_iter().find(|r| r.tag == version)
+                .ok_or_else(|| CoreError::NotFound(format!("Engine version '{}' not found", version)))?
+        };
 
-        if version != "latest" && version != release.tag {
-            return Err(CoreError::InvalidState(format!(
-                "Requested version '{}' is not available (latest is '{}')",
-                version, release.tag
-            )).into());
-        }
+        info!("Starting installation of OpenGothic version: {}", release.tag);
 
         let asset = self
             .find_asset(&release, platform)
@@ -146,6 +156,21 @@ impl LauncherService {
         let mut cfg = self.config_store.load().await?;
         cfg.active_engine = Some(version.to_string());
         self.config_store.save(&cfg).await?;
+        Ok(())
+    }
+
+    pub async fn delete_engine(&self, version: &str) -> Result<(), AppError> {
+        info!("Deleting engine version: {}", version);
+        let version_dir = self.paths.engines_dir().join(version);
+        if self.fs.exists(&version_dir).await {
+            self.fs.remove_dir_all(&version_dir).await?;
+        }
+
+        let mut cfg = self.config_store.load().await?;
+        if cfg.active_engine.as_deref() == Some(version) {
+            cfg.active_engine = None;
+            self.config_store.save(&cfg).await?;
+        }
         Ok(())
     }
 
@@ -230,14 +255,60 @@ impl LauncherService {
 
         if let Some(active) = cfg.active_engine.as_ref() {
             if let Some(found) = installed.iter().find(|e| &e.version == active) {
-                return Ok(found.clone());
+                if self.is_engine_healthy(&found.executable_path).await {
+                    return Ok(found.clone());
+                } else {
+                    info!("Engine {} at {} is not healthy, searching for fallback", active, found.executable_path.display());
+                }
             }
         }
 
-        installed
-            .first()
-            .cloned()
-            .ok_or_else(|| CoreError::NotFound("No installed OpenGothic engines".to_string()))
+        for engine in &installed {
+            if self.is_engine_healthy(&engine.executable_path).await {
+                return Ok(engine.clone());
+            }
+        }
+
+        Err(CoreError::NotFound("No healthy OpenGothic engine found. Try reinstalling or checking system dependencies.".to_string()))
+    }
+
+    async fn is_engine_healthy(&self, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(path) {
+                if metadata.permissions().mode() & 0o111 == 0 {
+                    info!("Engine executable {} has no execute permissions", path.display());
+                    return false;
+                }
+            }
+        }
+
+        // Try running with --help to see if it even starts
+        let status = std::process::Command::new(path)
+            .current_dir(path.parent().unwrap_or(Path::new(".")))
+            .arg("--help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => true,
+            Ok(s) => {
+                if let Some(code) = s.code() {
+                    info!("Engine {} returned non-zero exit code: {}", path.display(), code);
+                    // If it returned a code, it at least started without crashing.
+                    true
+                } else {
+                    info!("Engine {} was killed by a signal (crashed or aborted)", path.display());
+                    false
+                }
+            }
+            Err(e) => {
+                info!("Failed to execute engine {}: {}", path.display(), e);
+                false
+            }
+        }
     }
 
     fn find_asset(&self, release: &EngineRelease, platform: EnginePlatform) -> Option<EngineAsset> {

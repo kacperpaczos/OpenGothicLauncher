@@ -11,6 +11,16 @@ pub enum GothicGame {
     Gothic3,
 }
 
+/// Metadata for a Gothic game variant, used for UI display.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameMetadata {
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub description: String,
+    pub banner_url: String,
+}
+
 impl GothicGame {
     pub fn display_name(&self) -> &'static str {
         match self {
@@ -19,6 +29,41 @@ impl GothicGame {
             Self::Gothic2NotR => "Gothic II: Night of the Raven",
             Self::ChroniclesOfMyrtana => "The Chronicles of Myrtana: Archolos",
             Self::Gothic3 => "Gothic 3",
+        }
+    }
+
+    pub fn metadata(&self) -> GameMetadata {
+        match self {
+            Self::Gothic1 => GameMetadata {
+                title: "Gothic".to_string(),
+                subtitle: None,
+                description: "Gothic to kultowe RPG akcji z 2001 roku, osadzone w mrocznym świecie fantasy. Wcielasz się w Bezimiennego, skazańca wrzuconego do Kolonii Karnej — gigantycznego więzienia otoczonego magiczną barierą.".to_string(),
+                banner_url: "/banner-archolos.png".to_string(), // Keep placeholders for now
+            },
+            Self::Gothic2 => GameMetadata {
+                title: "Gothic II".to_string(),
+                subtitle: None,
+                description: "Gothic II kontynuuje przygodę Bezimiennego po upadku Bariery. Miasto Khorinis i otaczające je tereny są zagrożone przez armię ciemności.".to_string(),
+                banner_url: "/banner-archolos.png".to_string(),
+            },
+            Self::Gothic2NotR => GameMetadata {
+                title: "Gothic II".to_string(),
+                subtitle: Some("Night of the Raven".to_string()),
+                description: "Night of the Raven — dodatek do Gothic II, który rozszerza świat gry o Jharkendar. Nowe potwory, przedmioty i questline'y czynią tę wersję definitywnym doświadczeniem Gothic II.".to_string(),
+                banner_url: "/banner-archolos.png".to_string(),
+            },
+            Self::ChroniclesOfMyrtana => GameMetadata {
+                title: "Archolos".to_string(),
+                subtitle: Some("The Chronicles of Myrtana".to_string()),
+                description: "The Chronicles of Myrtana: Archolos to pełnoprawna gra RPG stworzona na silniku Gothic II. Oferuje ponad 100 godzin rozgrywki z nową fabułą i ogromnym światem.".to_string(),
+                banner_url: "/banner-archolos.png".to_string(),
+            },
+            Self::Gothic3 => GameMetadata {
+                title: "Gothic 3".to_string(),
+                subtitle: None,
+                description: "Trzecia część serii Gothic, w której Bezimienny trafia na kontynent Myrtana. Wyzwól krainę spod panowania orków lub sprzymierz się z nimi.".to_string(),
+                banner_url: "/banner-archolos.png".to_string(),
+            },
         }
     }
 
