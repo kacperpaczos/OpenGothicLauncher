@@ -10,7 +10,7 @@ export default component$(() => {
   const state = useStore<AppStore>({
     selectedGame: GothicGame.Gothic1,
     viewModel: null,
-  });
+  }, { deep: true });
 
   useContextProvider(LauncherContext, state);
 
@@ -41,9 +41,28 @@ export default component$(() => {
 
     await requestState();
 
+    // Global click logger
+    const clickHandler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      
+      let details = "";
+      if (target.id) details += `id: ${target.id}`;
+      if (target.className) details += `${details ? ", " : ""}class: ${target.className}`;
+      if (target.innerText) details += `${details ? ", " : ""}text: ${target.innerText.substring(0, 30)}`;
+
+      invoke("log_action", { 
+        action: `Click on <${target.tagName.toLowerCase()}>`, 
+        details 
+      }).catch(console.error);
+    };
+
+    window.addEventListener("click", clickHandler);
+
     return () => {
        unlistenState();
        unlistenProgress();
+       window.removeEventListener("click", clickHandler);
     };
   });
 

@@ -19,36 +19,10 @@ export const GameDetailsPanel = component$<GameDetailsPanelProps>(({ game }) => 
 
   return (
     <aside class="details-panel">
-      {/* Game Status Card */}
+      {/* Engine & Profiles Card */}
       <div class="detail-card">
         <h3 class="detail-card-title">
-          <span class="detail-icon">🎮</span> Game Status
-        </h3>
-        <div class="detail-card-body">
-          <div class="detail-row">
-            <span class="detail-label">⏱ Total Playtime:</span>
-            <span class="detail-value">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">🕐 Last Played:</span>
-            <span class="detail-value">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">💾 Last Save State:</span>
-            <span class="detail-value detail-value-wrap">—</span>
-          </div>
-          <div class="detail-screenshot">
-            <div class="screenshot-placeholder">
-              <span>No screenshot</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Engine & Mods Card */}
-      <div class="detail-card">
-        <h3 class="detail-card-title">
-          <span class="detail-icon">⚙</span> Engine & Mods
+          <span class="detail-icon">⚙</span> Engine & Profile
         </h3>
         <div class="detail-card-body">
           <div class="detail-row">
@@ -65,12 +39,12 @@ export const GameDetailsPanel = component$<GameDetailsPanelProps>(({ game }) => 
             </span>
           </div>
           <div class="detail-row">
-            <span class="detail-label">Active Patches:</span>
-            <span class="detail-value">—</span>
+            <span class="detail-label">Active Profile:</span>
+            <span class="detail-value">{launcherState.viewModel?.config.activeProfileId || "Default"}</span>
           </div>
           <div class="detail-row">
-            <span class="detail-label">Active Textures:</span>
-            <span class="detail-value">—</span>
+            <span class="detail-label">Modbox Status:</span>
+            <span class="detail-value">Inactive</span>
           </div>
         </div>
       </div>
