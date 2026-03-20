@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use ogl_core::{EngineRelease, EngineVersion, GameState, GothicGame, LauncherConfig};
+use ogl_core::{EngineRelease, EngineVersion, GameState, GothicGame, LauncherConfig, Profile};
 
 use crate::app_state::SharedContext;
 
